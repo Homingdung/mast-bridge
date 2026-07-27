@@ -1,0 +1,303 @@
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Sequence
+
+
+EXTERNAL_REPOS = ("tokamark", "tokamind", "freegsnke", "LARGE_MODEL_FUSION")
+CLONE_URLS = {
+    "tokamark_root": ("https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamark.git", "external/tokamark"),
+    "tokamind_root": ("https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git", "external/tokamind"),
+    "freegsnke_root": ("https://github.com/FusionComputingLab/freegsnke.git", "external/freegsnke"),
+}
+REQUIRED_PATH_KEYS = (
+    "tokamark_root",
+    "tokamind_root",
+    "freegsnke_root",
+    "large_model_fusion_root",
+    "mast_data_dir",
+)
+IMPORT_CHECKS = {
+    "mast_bridge": "mast_bridge",
+    "tokamark": "tokamark",
+    "tokamind": "mmt",
+    "freegsnke": "freegsnke",
+}
+
+
+def full_environment_python_error(version_info: Sequence[int] | None = None) -> str | None:
+    """Return setup guidance when FreeGSNKE's pinned stack is unsupported."""
+    version = tuple(version_info or sys.version_info[:3])
+    if version >= (3, 14):
+        return (
+            "Full FreeGSNKE setup requires Python 3.10-3.13; "
+            f"the active interpreter is Python {version[0]}.{version[1]}. "
+            "Create .mast-bridge-env with Python 3.12 or 3.13, activate it, and retry."
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class WorkspaceLayout:
+    workspace_root: Path
+    mast_bridge_root: Path
+    external_root: Path
+    tokamark_root: Path
+    tokamind_root: Path
+    freegsnke_root: Path
+    large_model_fusion_root: Path
+    mast_data_dir: Path
+    data_root: Path
+    runs_root: Path
+    artifacts_root: Path
+
+    def as_dict(self) -> dict[str, Path]:
+        return {
+            "workspace_root": self.workspace_root,
+            "external_root": self.external_root,
+            "tokamark_root": self.tokamark_root,
+            "tokamind_root": self.tokamind_root,
+            "freegsnke_root": self.freegsnke_root,
+            "large_model_fusion_root": self.large_model_fusion_root,
+            "mast_data_dir": self.mast_data_dir,
+            "data_root": self.data_root,
+            "runs_root": self.runs_root,
+            "artifacts_root": self.artifacts_root,
+        }
+
+
+@dataclass(frozen=True)
+class DoctorReport:
+    present_paths: tuple[str, ...]
+    missing_paths: tuple[str, ...]
+    import_status: dict[str, bool]
+
+    @property
+    def ok(self) -> bool:
+        return not self.missing_paths and all(self.import_status.values())
+
+
+def _first_existing(candidates: Iterable[Path], fallback: Path) -> Path:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return fallback.resolve()
+
+
+def _repo_root(name: str, workspace_root: Path, external_root: Path) -> Path:
+    return _first_existing(
+        (
+            external_root / name,
+            workspace_root / name,
+        ),
+        external_root / name,
+    )
+
+
+def _large_model_fusion_root(workspace_root: Path, external_root: Path) -> Path:
+    return _first_existing(
+        (
+            external_root / "LARGE_MODEL_FUSION",
+            external_root / "LARGE_MODEL_FUSION-master",
+            workspace_root / "LARGE_MODEL_FUSION",
+            workspace_root / "LARGE_MODEL_FUSION-master",
+            workspace_root / "data" / "LARGE_MODEL_FUSION-master",
+        ),
+        external_root / "LARGE_MODEL_FUSION",
+    )
+
+
+def discover_workspace(mast_bridge_root: str | Path | None = None) -> WorkspaceLayout:
+    root = Path(mast_bridge_root or Path.cwd()).expanduser().resolve()
+    if root.name != "mast-bridge" and (root / "mast-bridge").is_dir():
+        root = (root / "mast-bridge").resolve()
+
+    workspace_root = root.parent.resolve()
+    external_root = (workspace_root / "external").resolve()
+    large_model_fusion_root = _large_model_fusion_root(workspace_root, external_root)
+
+    return WorkspaceLayout(
+        workspace_root=workspace_root,
+        mast_bridge_root=root,
+        external_root=external_root,
+        tokamark_root=_repo_root("tokamark", workspace_root, external_root),
+        tokamind_root=_repo_root("tokamind", workspace_root, external_root),
+        freegsnke_root=_repo_root("freegsnke", workspace_root, external_root),
+        large_model_fusion_root=large_model_fusion_root,
+        mast_data_dir=(large_model_fusion_root / "mast_data").resolve(),
+        data_root=(workspace_root / "data").resolve(),
+        runs_root=(workspace_root / "runs").resolve(),
+        artifacts_root=(workspace_root / "artifacts").resolve(),
+    )
+
+
+def write_paths_yaml(layout: WorkspaceLayout, output_path: str | Path) -> None:
+    output = Path(output_path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Generated by mast_bridge bootstrap. Do not commit this file.",
+        *[f"{key}: {value}" for key, value in layout.as_dict().items()],
+        "",
+    ]
+    output.write_text("\n".join(lines), encoding="utf-8")
+
+
+def editable_install_commands(
+    layout: WorkspaceLayout,
+    python: str | Path = sys.executable,
+    with_deps: bool = False,
+) -> list[list[str]]:
+    commands: list[list[str]] = []
+    for path in (
+        layout.mast_bridge_root,
+        layout.tokamark_root,
+        layout.tokamind_root,
+        layout.freegsnke_root,
+    ):
+        install_target = str(path)
+        if with_deps and path == layout.freegsnke_root:
+            install_target += "[freegs4e]"
+        command = [str(python), "-m", "pip", "install", "-e", install_target]
+        if not with_deps:
+            command.append("--no-deps")
+        commands.append(command)
+    return commands
+
+
+def create_workspace_dirs(layout: WorkspaceLayout) -> None:
+    for path in (layout.external_root, layout.data_root, layout.runs_root, layout.artifacts_root):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def run_doctor(layout: WorkspaceLayout, check_imports: bool = True) -> DoctorReport:
+    present: list[str] = []
+    missing: list[str] = []
+    for key, path in layout.as_dict().items():
+        if key in REQUIRED_PATH_KEYS:
+            (present if path.exists() else missing).append(key)
+
+    imports: dict[str, bool] = {}
+    if check_imports:
+        for name, module in IMPORT_CHECKS.items():
+            imports[name] = importlib.util.find_spec(module) is not None
+
+    return DoctorReport(
+        present_paths=tuple(sorted(present)),
+        missing_paths=tuple(sorted(missing)),
+        import_status=imports,
+    )
+
+
+def format_doctor_report(layout: WorkspaceLayout, report: DoctorReport) -> str:
+    lines = ["mast_bridge workspace doctor", ""]
+    for key, path in layout.as_dict().items():
+        if key in REQUIRED_PATH_KEYS:
+            marker = "OK" if key in report.present_paths else "MISSING"
+        else:
+            marker = "OK" if path.exists() else "CREATE"
+        lines.append(f"{marker:7} {key}: {path}")
+    if report.import_status:
+        lines.extend(("", "Python imports:"))
+        for name, ok in sorted(report.import_status.items()):
+            lines.append(f"{'OK' if ok else 'MISSING':7} {name}")
+    return "\n".join(lines)
+
+
+def format_next_steps(
+    layout: WorkspaceLayout,
+    report: DoctorReport,
+    python: str | Path = sys.executable,
+    with_deps: bool = False,
+) -> str:
+    lines: list[str] = []
+    clone_lines: list[str] = []
+    for key in report.missing_paths:
+        if key in CLONE_URLS:
+            url, target = CLONE_URLS[key]
+            clone_lines.append(f"git clone {url} {target}")
+    if "large_model_fusion_root" in report.missing_paths:
+        clone_lines.append("Place LARGE_MODEL_FUSION under external/LARGE_MODEL_FUSION")
+
+    if clone_lines:
+        lines.extend(("Next clone/setup commands:", *clone_lines))
+
+    if report.import_status and not all(report.import_status.values()):
+        commands = editable_install_commands(layout, python=python, with_deps=with_deps)
+        lines.extend(("", "Editable install commands:"))
+        lines.extend(" ".join(shlex.quote(part) for part in command) for command in commands)
+
+    return "\n".join(lines)
+
+
+def _print_commands(commands: Sequence[Sequence[str]]) -> None:
+    for command in commands:
+        print(" ".join(command))
+
+
+def bootstrap_main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Prepare an mast_bridge workspace with external repositories.")
+    parser.add_argument("--mast-bridge-root", type=Path, default=Path.cwd())
+    parser.add_argument("--write-config", action="store_true")
+    parser.add_argument("--install-editable", action="store_true")
+    parser.add_argument("--with-deps", action="store_true", help="Allow pip to install package dependencies.")
+    parser.add_argument("--python", type=Path, default=Path(sys.executable))
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+
+    if args.with_deps:
+        python_error = full_environment_python_error()
+        if python_error:
+            print(f"ERROR: {python_error}", file=sys.stderr)
+            return 2
+
+    layout = discover_workspace(args.mast_bridge_root)
+    if not args.dry_run:
+        create_workspace_dirs(layout)
+
+    config_path = layout.mast_bridge_root / "configs" / "paths.local.yaml"
+    if args.write_config:
+        print(f"write config: {config_path}")
+        if not args.dry_run:
+            write_paths_yaml(layout, config_path)
+
+    commands = editable_install_commands(layout, args.python, with_deps=args.with_deps)
+    if args.install_editable:
+        if args.dry_run:
+            _print_commands(commands)
+        else:
+            for command in commands:
+                subprocess.run(command, check=True)
+
+    report = run_doctor(layout, check_imports=not args.dry_run)
+    print(format_doctor_report(layout, report))
+    next_steps = format_next_steps(layout, report, python=args.python, with_deps=args.with_deps)
+    if next_steps:
+        print()
+        print(next_steps)
+    return 0 if not report.missing_paths else 1
+
+
+def doctor_main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Check mast_bridge workspace paths and imports.")
+    parser.add_argument("--mast-bridge-root", type=Path, default=Path.cwd())
+    parser.add_argument("--skip-imports", action="store_true")
+    args = parser.parse_args(argv)
+
+    layout = discover_workspace(args.mast_bridge_root)
+    report = run_doctor(layout, check_imports=not args.skip_imports)
+    print(format_doctor_report(layout, report))
+    next_steps = format_next_steps(layout, report)
+    if next_steps:
+        print()
+        print(next_steps)
+    return 0 if report.ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(bootstrap_main())

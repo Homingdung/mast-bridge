@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mast-bridge"
+version = "0.1.0"
+description = "AI for fusion data processing, simulation augmentation, and training orchestration."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = []
+
+[project.scripts]
+mast-bridge-bootstrap = "mast_bridge.workspace:bootstrap_main"
+mast-bridge-doctor = "mast_bridge.workspace:doctor_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

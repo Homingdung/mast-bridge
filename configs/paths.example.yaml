@@ -1,0 +1,23 @@
+# Copy to configs/paths.local.yaml or run:
+#   python scripts/bootstrap_workspace.py --write-config
+#
+# The recommended reader workflow is:
+#   mkdir fusion-workspace
+#   cd fusion-workspace
+#   git clone <mast-bridge-repo-url> mast-bridge
+#   mkdir external
+#   git clone <tokamark-url> external/tokamark
+#   git clone <tokamind-url> external/tokamind
+#   git clone <freegsnke-url> external/freegsnke
+#   git clone <LARGE_MODEL_FUSION-url> external/LARGE_MODEL_FUSION
+
+workspace_root: /absolute/path/to/fusion-workspace
+external_root: /absolute/path/to/fusion-workspace/external
+tokamark_root: /absolute/path/to/fusion-workspace/external/tokamark
+tokamind_root: /absolute/path/to/fusion-workspace/external/tokamind
+freegsnke_root: /absolute/path/to/fusion-workspace/external/freegsnke
+large_model_fusion_root: /absolute/path/to/fusion-workspace/external/LARGE_MODEL_FUSION
+mast_data_dir: /absolute/path/to/fusion-workspace/external/LARGE_MODEL_FUSION/mast_data
+data_root: /absolute/path/to/fusion-workspace/data
+runs_root: /absolute/path/to/fusion-workspace/runs
+artifacts_root: /absolute/path/to/fusion-workspace/artifacts
