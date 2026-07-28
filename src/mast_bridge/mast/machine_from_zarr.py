@@ -141,8 +141,8 @@ def _passive_payload(root: Any) -> list[dict[str, Any]]:
                 {
                     "R": r_value,
                     "Z": z_value,
-                    "dR": width[index] if len(width) > 1 else width[0],
-                    "dZ": height[index] if len(height) > 1 else height[0],
+                    "dR": abs(width[index] if len(width) > 1 else width[0]),
+                    "dZ": abs(height[index] if len(height) > 1 else height[0]),
                     "resistivity": PASSIVE_RESISTIVITY,
                     "element": geometry,
                     "name": str(channels[index]) if index < len(channels) else f"{geometry}_{index}",

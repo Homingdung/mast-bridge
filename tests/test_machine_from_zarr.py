@@ -84,6 +84,16 @@ class MachineFromZarrTests(unittest.TestCase):
         self.assertEqual(payloads["magnetic_probes"]["flux_loops"][0]["name"], "FL1")
         self.assertEqual(payloads["magnetic_probes"]["pickups"][0]["family"], "CCBV")
 
+    def test_normalizes_passive_widths_for_freegsnke(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shot = self._fixture(Path(temp_dir))
+            passive = zarr.open_group(str(shot), mode="a")["pf_passive"]
+            passive["ring_width"][:] = np.array([-0.06, 0.06])
+
+            payloads = build_machine_payloads(shot)
+
+        self.assertEqual([item["dR"] for item in payloads["passive_coils"]], [0.06, 0.06])
+
     def test_writes_expected_filenames_and_refuses_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -13,7 +13,7 @@ dist/
 # Local machine/workspace state
 configs/paths.local.yaml
 
-# Large local outputs
-/data/
+# Large local data and outputs
+data/
 /runs/
 /artifacts/
