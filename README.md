@@ -11,42 +11,41 @@
 三个阶段通过 workspace 中的文件传递数据，不要求使用同一个 Python 环境。
 
 ## 1. Workspace 结构
+读者从一个空目录开始：
 
-建议从一个空目录开始：
+```bash
+mkdir fusion-workspace
+
+cd fusion-workspace
+
+git clone <mast-bridge-repo-url> mast-bridge
+
+mkdir external
+
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamark.git external/tokamark
+
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git external/tokamind
+
+git clone https://github.com/FusionComputingLab/freegsnke.git external/freegsnke
+```
+
+推荐目录：
 
 ```text
 fusion-workspace/
 ├── mast-bridge/
 ├── external/
-│   ├── LARGE_MODEL_FUSION-master/
-│   └── freegsnke/
+│   ├── LARGE_MODEL_FUSION/
+│   ├── freegsnke/
+│   ├── tokamark/
+│   └── tokamind/
 ├── data/
-│   ├── raw/
-│   │   └── mast/
-│   │       ├── <shot>.zarr/
-│   │       └── machine/<shot>/
-│   ├── processed/
-│   │   ├── real/<shot>/
-│   │   └── synthetic/<shot>_variant_<id>/
+│   ├── raw/mast/
+│   ├── processed/real/
+│   ├── processed/synthetic/
 │   └── manifests/
 ├── runs/
 └── artifacts/
-```
-
-克隆本仓库和 FreeGSNKE：
-
-```bash
-mkdir fusion-workspace
-cd fusion-workspace
-git clone <mast-bridge-repo-url> mast-bridge
-mkdir -p external
-git clone https://github.com/FusionComputingLab/freegsnke.git external/freegsnke
-```
-
-将 `LARGE_MODEL_FUSION-master` 放到：
-
-```text
-fusion-workspace/external/LARGE_MODEL_FUSION-master/
 ```
 
 初始化本地路径配置：
