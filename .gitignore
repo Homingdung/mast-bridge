@@ -17,3 +17,8 @@ configs/paths.local.yaml
 data/
 /runs/
 /artifacts/
+
+# env
+.freegsnke-solve-env/
+.mast-download-env/
+.mast-process-env/
