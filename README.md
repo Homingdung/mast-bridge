@@ -1,39 +1,47 @@
 # mast-bridge
 
-`mast-bridge` 用于把 MAST 实验数据转换成 FreeGSNKE 可以使用的输入，并以真实 MAST shot 为父样本生成仿真数据，服务于数据增强。
+`mast-bridge` 把 MAST Level 2 Zarr 数据转换成 FreeGSNKE 可用输入，并以真实 shot 为父样本批量生成 synthetic equilibrium 数据，用于 Tokamind/Tokamark 训练。
 
-本项目的工作流拆成三个阶段：
+主流程：
 
-1. 从 `LARGE_MODEL_FUSION-master` 下载 MAST 原始 Zarr 数据；
-2. 在不安装 FreeGSNKE 的环境中读取 Zarr，提取几何信息并生成 machine configuration；
-3. 在独立的 FreeGSNKE 环境中，根据某个 shot 和某个时间点的电流状态进行平衡求解。
+```text
+download MAST Level 2
+  -> filter successful shots
+  -> build machine pickles
+  -> build Lao/EFIT NPZ
+  -> run FreeGSNKE forward solves
+  -> train Tokamind/Tokamark from manifests
+```
 
-三个阶段通过 workspace 中的文件传递数据，不要求使用同一个 Python 环境。
+数据输入和产出统一放在 workspace 的 `data/` 目录下。`data_analysis_report/` 只用于图片和分析报告，不作为训练流水线的数据输入目录。
 
-## 1. Workspace 结构
-读者从一个空目录开始：
+## 1. Workspace
+
+从一个空目录开始：
 
 ```bash
 mkdir fusion-workspace
-
 cd fusion-workspace
 
-git clone <mast-bridge-repo-url> mast-bridge
+git clone git@github.com:Homingdung/mast-bridge.git mast-bridge
 
 mkdir external
-
-git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamark.git external/tokamark
-
-git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git external/tokamind
-
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/LARGE_MODEL_FUSION.git external/LARGE_MODEL_FUSION
 git clone https://github.com/FusionComputingLab/freegsnke.git external/freegsnke
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamark.git external/tokamark
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git external/tokamind
 ```
+
+如果 `LARGE_MODEL_FUSION` 仓库实际以 `LARGE_MODEL_FUSION-master` 目录存在，当前下载脚本也兼容；推荐新 workspace 使用 `external/LARGE_MODEL_FUSION`。
 
 推荐目录：
 
 ```text
 fusion-workspace/
 ├── mast-bridge/
+│   └── configs/
+│       ├── shot_lists/
+│       └── time_grids/
 ├── external/
 │   ├── LARGE_MODEL_FUSION/
 │   ├── freegsnke/
@@ -48,22 +56,22 @@ fusion-workspace/
 └── artifacts/
 ```
 
-初始化本地路径配置：
+初始化路径配置：
 
 ```bash
-cd mast-bridge
+cd fusion-workspace/mast-bridge
 python3 scripts/bootstrap_workspace.py --write-config
 ```
 
-这会生成 `configs/paths.local.yaml`。该文件只记录本机路径，不应提交到版本库。
+这会生成 `configs/paths.local.yaml`。该文件只记录本机路径，不应提交。
 
-## 2. 三个独立的 Python 环境
+## 2. Python Environments
 
-所有环境建议使用 Python 3.12。FreeGSNKE 当前要求 Python `>=3.10,<3.14`。
+三个阶段使用三个独立环境，避免 FreeGSNKE 依赖污染下载和数据处理阶段。建议 Python 3.12。
 
-### 2.1 下载环境：`mast-download`
+### 2.1 mast-download
 
-这个环境只负责调用 `LARGE_MODEL_FUSION-master` 的下载脚本，不安装 FreeGSNKE：
+用于调用 `LARGE_MODEL_FUSION` 下载脚本：
 
 ```bash
 cd fusion-workspace/mast-bridge
@@ -74,56 +82,16 @@ python -m pip install -e . --no-deps
 python -m pip install s3fs xarray zarr
 ```
 
-`LARGE_MODEL_FUSION-master` 可能还有自己的运行时依赖，请按照该仓库的 README 安装，并只安装到这个环境。
-
-确认工具：
+确认：
 
 ```bash
 python scripts/doctor.py --skip-imports
 s5cmd --version
 ```
 
-先使用 `--dry-run` 检查命令：
+### 2.2 mast-process
 
-```bash
-python scripts/download_mast_shots.py \
-  --shot 11766 \
-  --shot 11767 \
-  --dry-run
-```
-
-确认后下载：
-
-```bash
-python scripts/download_mast_shots.py \
-  --shot 11766 \
-  --shot 11767
-```
-
-默认输出：
-
-```text
-fusion-workspace/data/raw/mast/11766.zarr/
-fusion-workspace/data/raw/mast/11767.zarr/
-```
-
-也可以指定输出目录：
-
-```bash
-python scripts/download_mast_shots.py \
-  --data-dir ../data/raw/mast \
-  --shot 11766
-```
-
-完成后：
-
-```bash
-deactivate
-```
-
-### 2.2 数据处理环境：`mast-process`
-
-这个环境负责读取 Zarr、检查 shot，以及从 shot 自身的几何字段生成 FreeGSNKE-compatible machine pickles。此阶段不导入 `freegsnke`：
+用于读取 Zarr、生成 machine pickles、生成 Lao/EFIT NPZ。不导入 FreeGSNKE：
 
 ```bash
 cd fusion-workspace/mast-bridge
@@ -134,80 +102,20 @@ python -m pip install -e . --no-deps
 python -m pip install numpy "zarr>=3,<4" xarray scipy matplotlib
 ```
 
-运行项目测试：
+确认：
 
 ```bash
 python -m unittest discover -s tests
 python -m py_compile \
+  scripts/download_mast_shots.py \
   scripts/build_machine_from_zarr.py \
+  scripts/build_lao_fit_npz.py \
   scripts/inspect_shot.py
 ```
 
-从 shot `11766` 生成 machine configuration：
+### 2.3 freegsnke-solve
 
-```bash
-python scripts/build_machine_from_zarr.py --shot 11766
-```
-
-输出目录：
-
-```text
-fusion-workspace/data/raw/mast/machine/11766/
-```
-
-其中包含：
-
-```text
-MAST_active_coils.pickle
-MAST_limiter.pickle
-MAST_magentic_probes.pickle
-MAST_passive_coilds.pickle
-MAST_wall.pickle
-```
-
-`magentic` 和 `coilds` 是为兼容现有 FreeGSNKE machine loader 保留的历史拼写。
-
-覆盖已有文件时必须显式指定：
-
-```bash
-python scripts/build_machine_from_zarr.py \
-  --shot 11766 \
-  --overwrite
-```
-
-检查 shot：
-
-```bash
-python scripts/inspect_shot.py --shot 11766
-```
-
-生成不包含磁通面的原始装置几何检查图：
-
-```bash
-source .mast-process-env/bin/activate
-python scripts/plot_mast_geometry.py --shot 11766
-```
-
-输出为 `data/processed/geometry/11766.png`。这张图直接使用 shot Zarr 中的 wall、active/passive structures 和 magnetic probes，用于检查 machine geometry；它不运行 FreeGSNKE，也不绘制求解结果。
-
-在 Python 中读取：
-
-```python
-from mast_bridge.mast.reader import ShotReader
-
-record = ShotReader("../data/raw/mast").read("11766")
-print(record.shot_id)
-print(record.zarr_path)
-print(record.signals.keys())
-print(record.equilibrium.keys())
-print(record.machine.files)
-```
-
-`record.signals` 和 `record.equilibrium` 是惰性打开的 Zarr group；读取 shot 不会启动 FreeGSNKE 求解。
-
-### 2.3 FreeGSNKE 求解环境：`freegsnke-solve`
-
-这个环境只负责求解：
+用于 FreeGSNKE forward solve：
 
 ```bash
 cd fusion-workspace/mast-bridge
@@ -217,9 +125,7 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e . --no-deps
 python -m pip install -e "../external/freegsnke[freegs4e]"
 
-# The downloaded MAST stores are Zarr 3. FreeGSNKE 3.0.1 currently
-# declares an older NumPy/SciPy combination, so override those pins after
-# installing its dependency set.
+# Downloaded MAST stores are Zarr 3. Override FreeGSNKE's older pins after install.
 python -m pip install --force-reinstall --no-deps \
   "numpy>=2.0,<2.3" \
   "scipy==1.15.3" \
@@ -227,7 +133,7 @@ python -m pip install --force-reinstall --no-deps \
 python -m pip install "donfig>=0.8" "google-crc32c>=1.5"
 ```
 
-安装完成后，在全新的 Python 进程中验证：
+确认：
 
 ```bash
 python - <<'PY'
@@ -243,217 +149,462 @@ print("freegsnke:", freegsnke.__file__)
 PY
 ```
 
-这里的 NumPy 2/SciPy 1.15/Zarr 3 组合是为了匹配当前下载数据和 macOS ARM 二进制 wheel；FreeGSNKE 的声明依赖仍可能让 `pip check` 报版本冲突，但实际导入和命令行求解需要这个组合。不要在同一环境中再次运行 `pip install -e "../external/freegsnke[freegs4e]"`，否则 pip 会把 NumPy 降回 1.26。
+如果之后再次运行 `pip install -e "../external/freegsnke[freegs4e]"`，pip 可能把 NumPy 降回 1.26，需要重新执行上面的 override。
 
-求解环境验证通过后，直接运行命令行脚本，不需要 Jupyter：
+## 3. Configure Run Size
 
-```bash
-python scripts/run_freegsnke_forward.py \
-  --shot 11766 \
-  --time 0.18
-```
+所有规模都由 shot list、time grid 和路径变量控制。同一套命令可以先本地 smoke test，再放到服务器跑 full run。
 
-默认输出：
+推荐三档：
 
 ```text
-data/processed/synthetic/11766_t0.18/equilibrium.npz
-data/processed/synthetic/11766_t0.18/metadata.json
-data/processed/synthetic/11766_t0.18/equilibrium.png
+local_smoke   2-4 shots, each 2-3 times
+local_dev     10-20 shots, each 5 times
+server_full   200-2000 shots, each 5-20 times
 ```
 
-脚本会从该 shot 的 Zarr 读取目标时间的 active/passive coil currents，从 Lao 拟合 NPZ 中选择最近时间的参数，并运行一个 `65 x 65` 的 FreeGSNKE 静态 forward solve。求解完成后使用 FreeGS4E 官方的 `plotEquilibrium` 绘制磁通面、分离面、磁轴、X 点、wall 和 limiter，再叠加 active coils 与 passive structures，保存为 `equilibrium.png`。
-
-常用参数：
+本地 smoke 配置：
 
 ```bash
+mkdir -p configs/shot_lists configs/time_grids
+
+cat > configs/shot_lists/local_smoke.txt <<'EOF'
+11771
+11772
+11773
+EOF
+
+cat > configs/time_grids/smoke_times.txt <<'EOF'
+0.16
+0.20
+EOF
+```
+
+本地变量：
+
+```bash
+SHOT_LIST=configs/shot_lists/local_smoke.txt
+ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
+TIME_GRID=configs/time_grids/smoke_times.txt
+DATA_DIR=../data/raw/mast
+FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+SYNTH_DIR=../data/processed/synthetic
+```
+
+服务器只替换变量，例如：
+
+```bash
+SHOT_LIST=configs/shot_lists/server_full.txt
+ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
+TIME_GRID=configs/time_grids/full_times.txt
+DATA_DIR=/data/mast/raw
+FIT_PATH=/data/mast/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+SYNTH_DIR=/data/mast/processed/synthetic
+```
+
+## 4. Batch Pipeline
+
+按本节顺序运行。不要跳过 `ACTIVE_SHOT_LIST`，它用于过滤下载失败或远端不存在的 shot。
+
+### 4.1 Download
+
+```bash
+source .mast-download-env/bin/activate
+
+SHOT_LIST=configs/shot_lists/local_smoke.txt
+ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
+DATA_DIR=../data/raw/mast
+```
+
+先检查命令：
+
+```bash
+while read shot; do
+  [ -z "$shot" ] && continue
+  python scripts/download_mast_shots.py \
+    --data-dir "$DATA_DIR" \
+    --shot "$shot" \
+    --dry-run
+done < "$SHOT_LIST"
+```
+
+下载：
+
+```bash
+while read shot; do
+  [ -z "$shot" ] && continue
+  python scripts/download_mast_shots.py \
+    --data-dir "$DATA_DIR" \
+    --shot "$shot"
+done < "$SHOT_LIST"
+```
+
+生成实际可处理列表：
+
+```bash
+while read shot; do
+  [ -z "$shot" ] && continue
+  if [ -d "$DATA_DIR/${shot}.zarr" ]; then
+    echo "$shot"
+  else
+    echo "Missing downloaded shot: $shot" >&2
+  fi
+done < "$SHOT_LIST" > "$ACTIVE_SHOT_LIST"
+```
+
+从这里开始，后续所有 `while read shot` 都使用：
+
+```bash
+done < "$ACTIVE_SHOT_LIST"
+```
+
+不要继续使用原始 `$SHOT_LIST`。
+
+### 4.2 Build Machine Pickles
+
+```bash
+source .mast-process-env/bin/activate
+
+ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
+DATA_DIR=../data/raw/mast
+```
+
+生成 machine pickles：
+
+```bash
+while read shot; do
+  [ -z "$shot" ] && continue
+  if [ ! -d "$DATA_DIR/${shot}.zarr" ]; then
+    echo "Skipping missing Zarr: $shot" >&2
+    continue
+  fi
+  python scripts/build_machine_from_zarr.py \
+    --data-dir "$DATA_DIR" \
+    --output-dir "$DATA_DIR/machine/$shot" \
+    --shot "$shot" \
+    --overwrite
+done < "$ACTIVE_SHOT_LIST"
+```
+
+检查：
+
+```bash
+while read shot; do
+  [ -z "$shot" ] && continue
+  python scripts/inspect_shot.py \
+    --data-dir "$DATA_DIR" \
+    --machine-dir "$DATA_DIR/machine/$shot" \
+    --shot "$shot"
+done < "$ACTIVE_SHOT_LIST"
+```
+
+每个 shot 应生成：
+
+```text
+data/raw/mast/machine/<shot>/
+├── MAST_active_coils.pickle
+├── MAST_limiter.pickle
+├── MAST_magentic_probes.pickle
+├── MAST_passive_coilds.pickle
+└── MAST_wall.pickle
+```
+
+`magentic` 和 `coilds` 是为兼容现有 FreeGSNKE loader 保留的历史拼写。
+
+### 4.3 Build Lao/EFIT NPZ
+
+FreeGSNKE forward solve 需要每个 shot/time 对应的 profile 参数。统一 NPZ 路径：
+
+```text
+data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+```
+
+生成：
+
+```bash
+source .mast-process-env/bin/activate
+
+ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
+DATA_DIR=../data/raw/mast
+FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+
+python scripts/build_lao_fit_npz.py \
+  --shot-list "$ACTIVE_SHOT_LIST" \
+  --data-dir "$DATA_DIR" \
+  --output "$FIT_PATH"
+```
+
+该脚本从 Level 2 Zarr 读取：
+
+```text
+equilibrium/dpressure_dpsi
+equilibrium/f_df_dpsi
+equilibrium/bvac_rmag
+magnetics/ip
+```
+
+并写出：
+
+```text
+shot
+time
+ip
+fvac
+freegsnke_alpha
+freegsnke_beta
+```
+
+### 4.4 Run FreeGSNKE Solves
+
+```bash
+source .freegsnke-solve-env/bin/activate
+
+ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
+TIME_GRID=configs/time_grids/smoke_times.txt
+DATA_DIR=../data/raw/mast
+FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+SYNTH_DIR=../data/processed/synthetic
+```
+
+先检查拟合文件：
+
+```bash
+test -f "$FIT_PATH" || {
+  echo "Missing Lao fit NPZ: $FIT_PATH" >&2
+  echo "Run scripts/build_lao_fit_npz.py in the mast-process environment first." >&2
+  exit 1
+}
+```
+
+批量求解：
+
+```bash
+while read shot; do
+  [ -z "$shot" ] && continue
+  if [ ! -d "$DATA_DIR/${shot}.zarr" ]; then
+    echo "Skipping missing Zarr: $shot" >&2
+    continue
+  fi
+  if [ ! -d "$DATA_DIR/machine/$shot" ]; then
+    echo "Skipping missing machine directory: $shot" >&2
+    continue
+  fi
+  while read time; do
+    [ -z "$time" ] && continue
+    output_dir="$SYNTH_DIR/${shot}_t${time}"
+    if [ -f "$output_dir/equilibrium.npz" ] && [ -f "$output_dir/metadata.json" ]; then
+      echo "Skipping existing sample: ${shot}_t${time}"
+      continue
+    fi
+    python scripts/run_freegsnke_forward.py \
+      --data-dir "$DATA_DIR" \
+      --machine-dir "$DATA_DIR/machine/$shot" \
+      --fit-path "$FIT_PATH" \
+      --shot "$shot" \
+      --time "$time" \
+      --nx 65 \
+      --ny 65 \
+      --tolerance 1e-3 \
+      --max-iterations 100 \
+      --output-dir "$output_dir"
+  done < "$TIME_GRID"
+done < "$ACTIVE_SHOT_LIST"
+```
+
+每个 synthetic 样本输出：
+
+```text
+data/processed/synthetic/<shot>_t<time>/
+├── equilibrium.npz
+├── metadata.json
+└── equilibrium.png
+```
+
+如果某个 solve 没达到收敛阈值，`metadata.json` 和终端输出会记录状态。小网格 smoke run 可用于检查链路，不代表正式训练参数。
+
+## 5. Single-Shot Commands
+
+下载一个 shot：
+
+```bash
+source .mast-download-env/bin/activate
+python scripts/download_mast_shots.py \
+  --data-dir ../data/raw/mast \
+  --shot 11771
+```
+
+生成 machine：
+
+```bash
+source .mast-process-env/bin/activate
+python scripts/build_machine_from_zarr.py \
+  --data-dir ../data/raw/mast \
+  --output-dir ../data/raw/mast/machine/11771 \
+  --shot 11771 \
+  --overwrite
+python scripts/inspect_shot.py \
+  --data-dir ../data/raw/mast \
+  --machine-dir ../data/raw/mast/machine/11771 \
+  --shot 11771
+```
+
+生成 Lao NPZ：
+
+```bash
+source .mast-process-env/bin/activate
+printf "11771\n" > /tmp/one_shot.txt
+python scripts/build_lao_fit_npz.py \
+  --shot-list /tmp/one_shot.txt \
+  --data-dir ../data/raw/mast \
+  --output ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+```
+
+求解一个 shot/time：
+
+```bash
+source .freegsnke-solve-env/bin/activate
 python scripts/run_freegsnke_forward.py \
-  --shot 11766 \
-  --time 0.18 \
+  --data-dir ../data/raw/mast \
+  --machine-dir ../data/raw/mast/machine/11771 \
+  --fit-path ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz \
+  --shot 11771 \
+  --time 0.16 \
   --nx 65 \
   --ny 65 \
   --tolerance 1e-3 \
   --max-iterations 100 \
-  --output-dir data/processed/synthetic/11766_variant_0001
+  --output-dir ../data/processed/synthetic/11771_t0.16
 ```
 
-如果数据或拟合结果不在默认位置，可以显式指定：
+## 6. Data Contract
 
-```bash
-python scripts/run_freegsnke_forward.py \
-  --shot 11766 \
-  --time 0.18 \
-  --data-dir ../data/raw/mast \
-  --machine-dir ../data/raw/mast/machine/11766 \
-  --fit-path ../data_analysis_report/efit_lao_freegsnke_forward/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-```
+### 6.1 Raw and Real Data
 
-## 3. 从真实 shot 到仿真增强数据
-
-### 3.1 数据和几何的边界
-
-一个 shot 的 Zarr 通常包含：
-
-- 装置几何：PF active coils、PF passive structures、wall/limiter、magnetic probes；
-- 随时间变化的信号：active-coil current、passive current、磁测量等；
-- equilibrium 或 EFIT 相关数据。
-
-`build_machine_from_zarr.py` 只把装置几何转换为五个 machine pickle。它不会为每个时间点生成不同的几何文件，因为同一 shot 的机械元件几何通常不随时间改变。
-
-所谓“不同时间的 machine 状态”应表示为：
+MAST Level 2 Zarr 是默认输入。它通常包含：
 
 ```text
-固定 machine geometry
-  + t 时刻的 active-coil currents
-  + t 时刻的 passive-structure currents
-  + t 时刻的 plasma / Lao 参数
-  = t 时刻的 FreeGSNKE solve input
+summary
+pulse_schedule
+pf_active
+pf_passive
+magnetics
+equilibrium
+wall
 ```
 
-因此，求解脚本应保存 `shot_id`、`time`、电流、Lao 参数和 solver 状态，而不是重复保存完全相同的几何 payload。
-
-### 3.2 推荐的数据目录
-
-真实 shot：
+本项目需要的真实数据产物：
 
 ```text
-data/processed/real/11766/
-├── shot_record.json
-├── machine/
-│   ├── MAST_active_coils.pickle
-│   ├── MAST_limiter.pickle
-│   ├── MAST_magentic_probes.pickle
-│   ├── MAST_passive_coilds.pickle
-│   └── MAST_wall.pickle
-└── equilibrium/
-    ├── efit.npz
-    └── lao_fit.json
+data/raw/mast/<shot>.zarr/
+data/raw/mast/machine/<shot>/*.pickle
+data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 ```
 
-仿真 variant：
+Level 1 保留原始诊断名和原始采集形态，不作为默认训练输入。
+
+### 6.2 Synthetic Data
+
+`run_freegsnke_forward.py` 会保存：
 
 ```text
-data/processed/synthetic/11766_variant_0001/
-├── equilibrium.npz
-├── metadata.json
-└── machine_link.json
+equilibrium.npz:
+  psi
+  R
+  Z
+  psi_axis
+  psi_bndry
+
+metadata.json:
+  parent_shot
+  target_time
+  fitted_time
+  machine_geometry_source
+  fit_path
+  coil_currents
+  Ip
+  fvac
+  alpha
+  beta
+  grid
+  solver_status
 ```
 
-`metadata.json` 至少记录：
+固定 geometry 和随时间变化的状态分开记录：
 
 ```text
-parent_shot
-target_time
-machine_geometry_source
-coil_currents
-passive_currents
-lao_parameters
-random_seed
-solver_status
-solver_iterations
+fixed machine geometry
+  + active/passive coil currents at t
+  + Lao/EFIT profile at nearest fitted time
+  = one FreeGSNKE solve input
 ```
 
-用户自定义 Lao 参数放在独立配置中：
+不要为每个时间点重复保存完全相同的 machine geometry payload。
 
-```bash
-cp configs/simulation/lao_custom.example.yaml \
-  configs/simulation/lao_custom.yaml
+### 6.3 Manifest
+
+训练、验证、测试必须按 shot 划分。同一个 shot 的真实样本和所有 synthetic variants 必须在同一个 split，避免信息泄漏。
+
+推荐 manifest：
+
+```text
+data/manifests/
+├── tokamark_simple_real.jsonl
+├── tokamark_simple_synthetic.jsonl
+├── tokamark_simple_train.jsonl
+├── tokamark_simple_val.jsonl
+└── tokamark_simple_test.jsonl
 ```
 
-真实 shot 拟合得到的参数和增强时采样的参数必须分开保存。
+每行至少包含：
 
-### 3.3 当前 FreeGSNKE 适配接口
-
-当前仓库已经提供 machine geometry 到 FreeGSNKE machine 的适配层：
-
-```python
-from mast_bridge.mast.reader import ShotReader
-from mast_bridge.simulation.freegsnke_runner import build_machine
-
-record = ShotReader("../data/raw/mast").read("11766")
-tokamak = build_machine(record.machine)
+```json
+{
+  "sample_id": "11771_t0.16",
+  "source": "synthetic",
+  "parent_shot": "11771",
+  "time": 0.16,
+  "data_path": "data/processed/synthetic/11771_t0.16/equilibrium.npz",
+  "metadata_path": "data/processed/synthetic/11771_t0.16/metadata.json",
+  "split": "train",
+  "task": "tokamark_simple"
+}
 ```
 
-如果需要开发新的求解策略，可以复用以下底层接口；正常读者只需要运行上面的命令行脚本。
+## 7. Tokamind/Tokamark Training Input
 
-实际求解接口示例：
+第一阶段保持任务简单：从 machine + currents + Lao profile 预测 equilibrium flux map。
 
-```python
-from freegsnke import equilibrium_update, GSstaticsolver
-from freegsnke.jtor_update import Lao85
+输入建议：
 
-eq = equilibrium_update.Equilibrium(
-    tokamak=tokamak,
-    Rmin=0.1,
-    Rmax=2.0,
-    Zmin=-2.0,
-    Zmax=2.0,
-    nx=65,
-    ny=65,
-)
-
-profiles = Lao85(
-    eq=eq,
-    Ip=Ip,
-    fvac=fvac,
-    alpha=alpha,
-    beta=beta,
-)
-
-solver = GSstaticsolver.NKGSsolver(eq)
-solver.solve(
-    eq=eq,
-    profiles=profiles,
-    constrain=None,
-    target_relative_tolerance=1e-3,
-    max_solving_iterations=100,
-)
+```text
+machine geometry reference
+coil currents
+Ip / Lao profile parameters
+R grid
+Z grid
 ```
 
-这里的 `Ip`、`fvac`、`alpha` 和 `beta` 应来自真实 shot 的 EFIT/Lao 处理结果，或来自明确记录的增强参数采样过程。
+目标：
 
-## 4. 阶段之间的验收标准
-
-下载阶段：
-
-```bash
-test -d ../data/raw/mast/11766.zarr
+```text
+psi
+psi_axis
+psi_bndry
 ```
 
-并确认 Zarr 至少包含 `pf_active`、`pf_passive`、`magnetics` 和 `wall` 等所需 group。
+扩展顺序：
 
-处理阶段：
-
-```bash
-python scripts/inspect_shot.py --shot 11766
+```text
+2 shots x 2 times       smoke test
+10-20 shots x 5 times   local dev
+200-2000 shots x 5-20 times server training data
 ```
 
-五个 machine 文件都必须存在并可读取。处理环境不需要能够执行 `import freegsnke`。
+跑通后再加入 Lao 参数扰动，为每个 shot/time 生成多个 variant。
 
-求解阶段：
+## 8. Verification
 
-```bash
-python -c "import numpy, scipy, freegs4e, freegsnke; print('FreeGSNKE import OK')"
-```
-
-然后再运行求解脚本。求解输出必须同时保存数值结果和 metadata，不能只依赖终端屏幕输出。
-
-## 5. 数据划分和可复现性
-
-真实数据和仿真 variant 使用 JSONL manifest 统一描述。训练集、验证集和测试集必须按 shot 划分；同一 shot 产生的所有 variant 必须和原始真实 shot 位于同一个 split，避免同一 shot 的信息泄漏到不同数据集。
-
-每个仿真样本必须记录：
-
-- 父 shot 和目标时间；
-- machine geometry 的来源目录；
-- active/passive coil currents；
-- Lao 参数；
-- 随机种子；
-- FreeGSNKE、NumPy、SciPy 版本；
-- solver 是否收敛、迭代次数和容差。
-
-## 6. 项目测试
-
-项目测试不下载 MAST 数据，也不启动 FreeGSNKE 长时间求解：
+项目测试不下载 MAST 数据，也不运行长时间 FreeGSNKE solve：
 
 ```bash
 source .mast-process-env/bin/activate
@@ -461,61 +612,60 @@ python -m unittest discover -s tests
 python -m py_compile \
   scripts/download_mast_shots.py \
   scripts/build_machine_from_zarr.py \
+  scripts/build_lao_fit_npz.py \
   scripts/inspect_shot.py \
   scripts/plot_mast_geometry.py \
   scripts/run_freegsnke_forward.py
 ```
 
-### 6.1 测试原始几何图
+阶段检查：
 
-在数据处理环境中运行：
+```bash
+test -d ../data/raw/mast/11771.zarr
+test -d ../data/raw/mast/machine/11771
+test -f ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+test -f ../data/processed/synthetic/11771_t0.16/equilibrium.npz
+test -f ../data/processed/synthetic/11771_t0.16/metadata.json
+```
+
+几何图：
 
 ```bash
 source .mast-process-env/bin/activate
-python scripts/plot_mast_geometry.py --shot 11766
+python scripts/plot_mast_geometry.py --shot 11771
 ```
 
-生成的图片位于：
+输出：
 
 ```text
-data/processed/geometry/11766.png
+data/processed/geometry/11771.png
 ```
 
-这张图只检查 Zarr 中的装置几何，不需要 FreeGSNKE 环境，也不会执行平衡求解。
+## 9. FAQ
 
-### 6.2 测试 FreeGSNKE 求解图
+### Missing downloaded shot
 
-在 FreeGSNKE 求解环境中运行：
+如果原始 `SHOT_LIST` 里有 `11770`，但本地没有 `11770.zarr`，后续步骤会失败。先生成 `ACTIVE_SHOT_LIST`，后续步骤只读 `ACTIVE_SHOT_LIST`。
+
+### Missing Lao fit NPZ
+
+先在 `.mast-process-env` 运行：
 
 ```bash
-source .freegsnke-solve-env/bin/activate
-python scripts/run_freegsnke_forward.py \
-  --shot 11766 \
-  --time 0.18
+python scripts/build_lao_fit_npz.py \
+  --shot-list configs/shot_lists/downloaded_success.txt \
+  --data-dir ../data/raw/mast \
+  --output ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 ```
 
-生成的求解结果和图片位于：
+### NumPy import error in FreeGSNKE
 
-```text
-data/processed/synthetic/11766_t0.18/equilibrium.npz
-data/processed/synthetic/11766_t0.18/metadata.json
-data/processed/synthetic/11766_t0.18/equilibrium.png
-```
+确认当前 shell 使用 `.freegsnke-solve-env`，并重新执行 FreeGSNKE 环境里的 NumPy/SciPy/Zarr override。不要把其他环境的 site-packages 加入 `sys.path`。
 
-`equilibrium.png` 使用 FreeGS4E 官方 `plotEquilibrium` 绘制磁通面、分离面、磁轴、X 点、wall 和 limiter；legend 位于图像右侧，不遮挡装置或磁通面。
+### Processing environment imports FreeGSNKE
 
-真实数据下载和 FreeGSNKE 求解都属于读者主动执行的阶段，不会在安装项目时自动发生。
+不需要。下载、inspect、machine build 和 Lao NPZ 都在 `.mast-process-env` 完成；FreeGSNKE 只在最后求解阶段导入。
 
-## 7. 常见问题
+### Path confusion
 
-### `ImportError: numpy._core.multiarray failed to import`
-
-这是 FreeGSNKE/FreeGS4E 环境中的 NumPy/SciPy 二进制兼容问题。确认当前 shell 使用 `.freegsnke-solve-env`，并在全新的 Python 进程中测试导入。不要把其他环境的 site-packages 加入 `sys.path`。
-
-### 处理环境导入了 FreeGSNKE
-
-这是不必要的。生成 machine pickles 的代码只需要 NumPy、Zarr 和标准库；FreeGSNKE 只在最后的求解阶段导入。
-
-### machine 文件或原始数据找不到
-
-从 `mast-bridge` 目录执行脚本，或显式传入 `--data-dir`、`--output-dir` 和 `--machine-dir`。脚本默认使用 `fusion-workspace/data/raw/mast`，不是 `external/LARGE_MODEL_FUSION-master/mast_data`。
+从 `mast-bridge` 目录执行命令。默认数据目录是 `fusion-workspace/data/...`，不是 `external/LARGE_MODEL_FUSION-master/mast_data`，也不是 `data_analysis_report/`。

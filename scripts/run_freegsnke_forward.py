@@ -17,8 +17,9 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = SCRIPT_ROOT.parent
 DEFAULT_FIT_PATH = (
     WORKSPACE_ROOT
-    / "data_analysis_report"
-    / "efit_lao_freegsnke_forward"
+    / "data"
+    / "processed"
+    / "real"
     / "lao_parameter_ensemble"
     / "all_zarr_lao_parameter_fits.npz"
 )

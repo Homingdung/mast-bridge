@@ -33,6 +33,17 @@ class ForwardScriptTests(unittest.TestCase):
             Path(temp_dir) / "data" / "processed" / "synthetic" / "11766_t0.18",
         )
 
+    def test_default_fit_path_lives_under_data_processed_real(self):
+        self.assertEqual(
+            MODULE.DEFAULT_FIT_PATH,
+            MODULE.WORKSPACE_ROOT
+            / "data"
+            / "processed"
+            / "real"
+            / "lao_parameter_ensemble"
+            / "all_zarr_lao_parameter_fits.npz",
+        )
+
     def test_plot_path_uses_equilibrium_png(self):
         self.assertEqual(
             MODULE.plot_path(Path("results")),
