@@ -21,4 +21,15 @@ class FreeGSNKEAdapterTests(unittest.TestCase):
 
         self.assertEqual(kwargs["active_coils_path"].name, "MAST_active_coils.pickle")
         self.assertEqual(kwargs["magnetic_probe_path"].name, "MAST_magentic_probes.pickle")
-        self.assertEqual(kwargs["passive_coils_path"].name, "MAST_passive_coilds.pickle")
+        self.assertEqual(kwargs["passive_coils_path"].name, "MAST_passive_coils.pickle")
+
+    def test_loads_legacy_passive_coilds_filename(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            machine_dir = Path(temp_dir)
+            for key, filename in REQUIRED_MACHINE_FILES.items():
+                if key == "passive_coils":
+                    filename = "MAST_passive_coilds.pickle"
+                (machine_dir / filename).write_bytes(b"fixture")
+            geometry = MachineGeometry.load(machine_dir)
+
+        self.assertEqual(geometry.files["passive_coils"].name, "MAST_passive_coilds.pickle")

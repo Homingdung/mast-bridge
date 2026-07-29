@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import pickle
+import re
 import shutil
 import sys
 import tempfile
@@ -33,6 +36,124 @@ def default_output_dir(workspace_root: Path, shot: str, target_time: float) -> P
 
 def plot_path(output_dir: Path) -> Path:
     return output_dir / "equilibrium.png"
+
+
+FORWARD_SOLVER_SUMMARY_RE = re.compile(
+    r"Forward static solve (?P<status>SUCCESS|DID NOT CONVERGE)\. "
+    r"Tolerance (?P<tolerance>[0-9.eE+-]+) "
+    r"\(vs\. requested (?P<requested>[0-9.eE+-]+)\) reached in "
+    r"(?P<iterations>\d+)/(?P<max_iterations>\d+) iterations\."
+)
+
+
+def parse_forward_solver_diagnostics(
+    solver_output: str, requested_tolerance: float, max_iterations: int
+) -> dict[str, Any]:
+    """Parse FreeGSNKE's forward solver summary into stable metadata."""
+    match = FORWARD_SOLVER_SUMMARY_RE.search(solver_output)
+    if match is None:
+        return {
+            "solver_status": "unknown",
+            "solver_converged": False,
+            "solver_final_tolerance": None,
+            "solver_requested_tolerance": float(requested_tolerance),
+            "solver_iterations": None,
+            "solver_max_iterations": int(max_iterations),
+            "solver_output": solver_output,
+        }
+
+    status = match.group("status")
+    return {
+        "solver_status": "success" if status == "SUCCESS" else "non_converged",
+        "solver_converged": status == "SUCCESS",
+        "solver_final_tolerance": float(match.group("tolerance")),
+        "solver_requested_tolerance": float(match.group("requested")),
+        "solver_iterations": int(match.group("iterations")),
+        "solver_max_iterations": int(match.group("max_iterations")),
+        "solver_output": solver_output,
+    }
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def equilibrium_topology_diagnostics(eq: Any) -> dict[str, Any]:
+    """Return JSON-serializable topology diagnostics relevant to LCFS QC."""
+    import numpy as np
+
+    xpt = np.asarray(getattr(eq, "xpt", []))
+    opt = np.asarray(getattr(eq, "opt", []))
+    profiles = getattr(eq, "_profiles", None)
+    primary_xpt_psi = None
+    if xpt.ndim == 2 and xpt.shape[0] > 0 and xpt.shape[1] > 2:
+        primary_xpt_psi = _safe_float(xpt[0, 2])
+
+    return {
+        "xpt_count": int(xpt.shape[0]) if xpt.ndim >= 2 else 0,
+        "opt_count": int(opt.shape[0]) if opt.ndim >= 2 else 0,
+        "flag_limiter": bool(getattr(profiles, "flag_limiter", getattr(eq, "flag_limiter", False))),
+        "psi_axis": _safe_float(getattr(eq, "psi_axis", None)),
+        "psi_bndry": _safe_float(getattr(eq, "psi_bndry", None)),
+        "primary_xpt_psi": primary_xpt_psi,
+    }
+
+
+def solve_with_diagnostics(
+    solver: Any,
+    eq: Any,
+    profiles: Any,
+    requested_tolerance: float,
+    max_iterations: int,
+) -> dict[str, Any]:
+    """Run the official FreeGSNKE solver and collect its printed diagnostics."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        solver.solve(
+            eq=eq,
+            profiles=profiles,
+            constrain=None,
+            target_relative_tolerance=requested_tolerance,
+            max_solving_iterations=max_iterations,
+        )
+    solver_output = buffer.getvalue()
+    print(solver_output, end="")
+    return parse_forward_solver_diagnostics(
+        solver_output, requested_tolerance, max_iterations
+    )
+
+
+def apply_lao85_perturbation(
+    *,
+    Ip: float,
+    fvac: float,
+    alpha: list[float],
+    beta: list[float],
+    ip_scale: float,
+    fvac_scale: float,
+    alpha_scale: float,
+    beta_scale: float,
+    alpha_offset: float,
+    beta_offset: float,
+) -> dict[str, Any]:
+    """Apply scalar Lao85 perturbations to a fitted parameter row."""
+    return {
+        "Ip": float(Ip) * float(ip_scale),
+        "fvac": float(fvac) * float(fvac_scale),
+        "alpha": [float(value) * float(alpha_scale) + float(alpha_offset) for value in alpha],
+        "beta": [float(value) * float(beta_scale) + float(beta_offset) for value in beta],
+        "perturbation": {
+            "ip_scale": float(ip_scale),
+            "fvac_scale": float(fvac_scale),
+            "alpha_scale": float(alpha_scale),
+            "beta_scale": float(beta_scale),
+            "alpha_offset": float(alpha_offset),
+            "beta_offset": float(beta_offset),
+        },
+    }
 
 
 def _draw_rectangles(ax: Any, payload: Any, color: str, label: str, alpha: float = 0.75) -> None:
@@ -80,10 +201,12 @@ def save_equilibrium_plot(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from freegs4e.plotting import plotEquilibrium
+    from mast_bridge.mast.machine_config import MachineGeometry
 
-    with (machine_dir / "MAST_active_coils.pickle").open("rb") as handle:
+    machine = MachineGeometry.load(machine_dir)
+    with machine.files["active_coils"].open("rb") as handle:
         active = pickle.load(handle)
-    with (machine_dir / "MAST_passive_coilds.pickle").open("rb") as handle:
+    with machine.files["passive_coils"].open("rb") as handle:
         passive = pickle.load(handle)
     figure, axis = plt.subplots(figsize=(8, 8))
     # Use FreeGS4E's official equilibrium renderer. FreeGSNKE exposes the
@@ -155,9 +278,10 @@ def _apply_currents(
         )
     )
 
-    active_payload = pickle.load(
-        (machine_dir / "MAST_active_coils.pickle").open("rb")
-    )
+    from mast_bridge.mast.machine_config import MachineGeometry
+
+    machine = MachineGeometry.load(machine_dir)
+    active_payload = pickle.load(machine.files["active_coils"].open("rb"))
     tokamak.set_all_coil_currents(np.zeros(tokamak.n_coils))
     for coil_name, payload in active_payload.items():
         leaf = payload
@@ -186,9 +310,7 @@ def _apply_currents(
                 at_time(passive_group["time"][:], row, target_time)
             )
 
-    passive_payload = pickle.load(
-        (machine_dir / "MAST_passive_coilds.pickle").open("rb")
-    )
+    passive_payload = pickle.load(machine.files["passive_coils"].open("rb"))
     for item in passive_payload:
         channel = item["source_current_channel"]
         name = item["name"]
@@ -206,7 +328,9 @@ def _copy_machine_with_positive_widths(source: Path) -> Path:
     for path in source.glob("*.pickle"):
         shutil.copy2(path, destination / path.name)
 
-    passive_path = destination / "MAST_passive_coilds.pickle"
+    from mast_bridge.mast.machine_config import MachineGeometry
+
+    passive_path = MachineGeometry.load(destination).files["passive_coils"]
     with passive_path.open("rb") as handle:
         passive_payload = pickle.load(handle)
     for item in passive_payload:
@@ -251,8 +375,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--nx", type=int, default=65)
     parser.add_argument("--ny", type=int, default=65)
-    parser.add_argument("--tolerance", type=float, default=1e-3)
+    parser.add_argument("--tolerance", type=float, default=1e-8)
     parser.add_argument("--max-iterations", type=int, default=100)
+    parser.add_argument("--ip-scale", type=float, default=1.0)
+    parser.add_argument("--fvac-scale", type=float, default=1.0)
+    parser.add_argument("--alpha-scale", type=float, default=1.0)
+    parser.add_argument("--beta-scale", type=float, default=1.0)
+    parser.add_argument("--alpha-offset", type=float, default=0.0)
+    parser.add_argument("--beta-offset", type=float, default=0.0)
     return parser
 
 
@@ -305,6 +435,22 @@ def main(argv: list[str] | None = None) -> int:
     alpha = np.asarray(fit["freegsnke_alpha"][fit_index]).tolist()
     beta = np.asarray(fit["freegsnke_beta"][fit_index]).tolist()
     fitted_time = float(fit["time"][fit_index])
+    lao85_parameters = apply_lao85_perturbation(
+        Ip=Ip,
+        fvac=fvac,
+        alpha=alpha,
+        beta=beta,
+        ip_scale=args.ip_scale,
+        fvac_scale=args.fvac_scale,
+        alpha_scale=args.alpha_scale,
+        beta_scale=args.beta_scale,
+        alpha_offset=args.alpha_offset,
+        beta_offset=args.beta_offset,
+    )
+    Ip = lao85_parameters["Ip"]
+    fvac = lao85_parameters["fvac"]
+    alpha = lao85_parameters["alpha"]
+    beta = lao85_parameters["beta"]
 
     eq = equilibrium_update.Equilibrium(
         tokamak=tokamak,
@@ -317,13 +463,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     profiles = Lao85(eq=eq, Ip=Ip, fvac=fvac, alpha=alpha, beta=beta)
     solver = GSstaticsolver.NKGSsolver(eq)
-    solver.solve(
+    solver_diagnostics = solve_with_diagnostics(
+        solver=solver,
         eq=eq,
         profiles=profiles,
-        constrain=None,
-        target_relative_tolerance=args.tolerance,
-        max_solving_iterations=args.max_iterations,
+        requested_tolerance=args.tolerance,
+        max_iterations=args.max_iterations,
     )
+    topology_diagnostics = equilibrium_topology_diagnostics(eq)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -349,12 +496,14 @@ def main(argv: list[str] | None = None) -> int:
         "fvac": fvac,
         "alpha": alpha,
         "beta": beta,
+        "lao85_perturbation": lao85_parameters["perturbation"],
         "grid": {"nx": args.nx, "ny": args.ny},
         "target_relative_tolerance": args.tolerance,
         "max_solving_iterations": args.max_iterations,
-        "solver_status": "completed",
         "plot_path": str(image_path),
     }
+    metadata.update(solver_diagnostics)
+    metadata.update(topology_diagnostics)
     (output_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )
@@ -363,6 +512,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"target_time: {args.target_time}")
     print(f"fitted_time: {fitted_time}")
     print(f"psi_shape: {eq.psi().shape}")
+    print(f"solver_status: {metadata['solver_status']}")
+    print(f"solver_final_tolerance: {metadata['solver_final_tolerance']}")
+    print(f"xpt_count: {metadata['xpt_count']}")
+    print(f"opt_count: {metadata['opt_count']}")
+    print(f"flag_limiter: {metadata['flag_limiter']}")
     print(f"equilibrium: {output_dir / 'equilibrium.npz'}")
     print(f"metadata: {output_dir / 'metadata.json'}")
     print(f"plot: {image_path}")
