@@ -30,7 +30,7 @@ REQUIRED_OUTPUTS = {
     "active_coils": "MAST_active_coils.pickle",
     "limiter": "MAST_limiter.pickle",
     "magnetic_probes": "MAST_magentic_probes.pickle",
-    "passive_coils": "MAST_passive_coilds.pickle",
+    "passive_coils": "MAST_passive_coils.pickle",
     "wall": "MAST_wall.pickle",
 }
 

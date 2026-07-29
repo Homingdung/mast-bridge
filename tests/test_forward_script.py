@@ -50,6 +50,88 @@ class ForwardScriptTests(unittest.TestCase):
             Path("results") / "equilibrium.png",
         )
 
+    def test_default_solver_tolerance_is_strict(self):
+        args = MODULE.build_parser().parse_args(["--shot", "11766", "--time", "0.18"])
+
+        self.assertEqual(args.tolerance, 1e-8)
+
+    def test_lao85_perturbation_scales_and_offsets_parameters(self):
+        alpha = [1.0, -2.0, 3.0]
+        beta = [0.5, -0.25, 0.75]
+
+        result = MODULE.apply_lao85_perturbation(
+            Ip=100.0,
+            fvac=2.0,
+            alpha=alpha,
+            beta=beta,
+            ip_scale=1.1,
+            fvac_scale=0.9,
+            alpha_scale=1.2,
+            beta_scale=0.8,
+            alpha_offset=0.5,
+            beta_offset=-0.1,
+        )
+
+        self.assertAlmostEqual(result["Ip"], 110.0)
+        self.assertAlmostEqual(result["fvac"], 1.8)
+        np.testing.assert_allclose(result["alpha"], [1.7, -1.9, 4.1])
+        np.testing.assert_allclose(result["beta"], [0.3, -0.3, 0.5])
+
+    def test_parse_forward_solver_success_diagnostics(self):
+        text = (
+            "Forward static solve SUCCESS. Tolerance 4.20e-04 "
+            "(vs. requested 1.00e-03) reached in 17/100 iterations."
+        )
+
+        diagnostics = MODULE.parse_forward_solver_diagnostics(text, 1e-3, 100)
+
+        self.assertEqual(diagnostics["solver_status"], "success")
+        self.assertTrue(diagnostics["solver_converged"])
+        self.assertAlmostEqual(diagnostics["solver_final_tolerance"], 4.20e-04)
+        self.assertEqual(diagnostics["solver_iterations"], 17)
+        self.assertEqual(diagnostics["solver_max_iterations"], 100)
+
+    def test_parse_forward_solver_non_convergence_diagnostics(self):
+        text = (
+            "Forward static solve DID NOT CONVERGE. Tolerance 2.60e-01 "
+            "(vs. requested 1.00e-03) reached in 100/100 iterations."
+        )
+
+        diagnostics = MODULE.parse_forward_solver_diagnostics(text, 1e-3, 100)
+
+        self.assertEqual(diagnostics["solver_status"], "non_converged")
+        self.assertFalse(diagnostics["solver_converged"])
+        self.assertAlmostEqual(diagnostics["solver_final_tolerance"], 2.60e-01)
+        self.assertEqual(diagnostics["solver_iterations"], 100)
+
+    def test_parse_forward_solver_falls_back_to_unknown(self):
+        diagnostics = MODULE.parse_forward_solver_diagnostics("", 1e-3, 100)
+
+        self.assertEqual(diagnostics["solver_status"], "unknown")
+        self.assertFalse(diagnostics["solver_converged"])
+        self.assertIsNone(diagnostics["solver_final_tolerance"])
+        self.assertEqual(diagnostics["solver_max_iterations"], 100)
+
+    def test_equilibrium_topology_diagnostics_are_json_ready(self):
+        class Profiles:
+            flag_limiter = True
+
+        class Equilibrium:
+            xpt = np.array([[1.1, -0.5, 0.7], [1.2, 0.5, 0.8]])
+            opt = np.array([[0.9, 0.0, 1.4]])
+            psi_axis = np.float64(1.4)
+            psi_bndry = np.float64(0.7)
+            _profiles = Profiles()
+
+        diagnostics = MODULE.equilibrium_topology_diagnostics(Equilibrium())
+
+        self.assertEqual(diagnostics["xpt_count"], 2)
+        self.assertEqual(diagnostics["opt_count"], 1)
+        self.assertTrue(diagnostics["flag_limiter"])
+        self.assertEqual(diagnostics["psi_axis"], 1.4)
+        self.assertEqual(diagnostics["psi_bndry"], 0.7)
+        self.assertEqual(diagnostics["primary_xpt_psi"], 0.7)
+
 
 if __name__ == "__main__":
     unittest.main()

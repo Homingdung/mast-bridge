@@ -1,6 +1,6 @@
 # mast-bridge
 
-`mast-bridge` 把 MAST Level 2 Zarr 数据转换成 FreeGSNKE 可用输入，并以真实 shot 为父样本批量生成 synthetic equilibrium 数据，用于 Tokamind/Tokamark 训练。
+`mast-bridge` 把 MAST Level 2 Zarr 数据转换成 FreeGSNKE 可用输入，并以真实 shot 为父样本批量生成 synthetic equilibrium 数据，用于后续 Tokamind/Tokamark 对比实验。
 
 主流程：
 
@@ -10,12 +10,24 @@ download MAST Level 2
   -> build machine pickles
   -> build Lao/EFIT NPZ
   -> run FreeGSNKE forward solves
-  -> train Tokamind/Tokamark from manifests
+  -> build real/synthetic/mixed manifests
 ```
 
-数据输入和产出统一放在 workspace 的 `data/` 目录下。`data_analysis_report/` 只用于图片和分析报告，不作为训练流水线的数据输入目录。
+数据输入和产出统一放在 workspace 的 `data/` 目录下。`data_analysis_report/` 只用于图片和分析报告，不作为当前数据流水线的输入目录。
 
-## 1. Workspace
+## 目录
+
+- [1. 工作区](#1-工作区)
+- [2. Python 环境](#2-python-环境)
+- [3. 配置运行规模](#3-配置运行规模)
+- [4. 批处理流程](#4-批处理流程)
+- [5. 当前 uniform_iter500 复现流程](#5-当前-uniform_iter500-复现流程)
+- [6. 单个 Shot 命令](#6-单个-shot-命令)
+- [7. 数据约定](#7-数据约定)
+- [8. 验证](#8-验证)
+- [9. 常见问题](#9-常见问题)
+
+## 1. 工作区
 
 从一个空目录开始：
 
@@ -65,11 +77,11 @@ python3 scripts/bootstrap_workspace.py --write-config
 
 这会生成 `configs/paths.local.yaml`。该文件只记录本机路径，不应提交。
 
-## 2. Python Environments
+## 2. Python 环境
 
 三个阶段使用三个独立环境，避免 FreeGSNKE 依赖污染下载和数据处理阶段。建议 Python 3.12。
 
-### 2.1 mast-download
+### 2.1 mast-download 下载环境
 
 用于调用 `LARGE_MODEL_FUSION` 下载脚本：
 
@@ -89,7 +101,7 @@ python scripts/doctor.py --skip-imports
 s5cmd --version
 ```
 
-### 2.2 mast-process
+### 2.2 mast-process 数据处理环境
 
 用于读取 Zarr、生成 machine pickles、生成 Lao/EFIT NPZ。不导入 FreeGSNKE：
 
@@ -113,7 +125,7 @@ python -m py_compile \
   scripts/inspect_shot.py
 ```
 
-### 2.3 freegsnke-solve
+### 2.3 freegsnke-solve 正问题求解环境
 
 用于 FreeGSNKE forward solve：
 
@@ -151,7 +163,7 @@ PY
 
 如果之后再次运行 `pip install -e "../external/freegsnke[freegs4e]"`，pip 可能把 NumPy 降回 1.26，需要重新执行上面的 override。
 
-## 3. Configure Run Size
+## 3. 配置运行规模
 
 所有规模都由 shot list、time grid 和路径变量控制。同一套命令可以先本地 smoke test，再放到服务器跑 full run。
 
@@ -202,11 +214,11 @@ FIT_PATH=/data/mast/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter
 SYNTH_DIR=/data/mast/processed/synthetic
 ```
 
-## 4. Batch Pipeline
+## 4. 批处理流程
 
 按本节顺序运行。不要跳过 `ACTIVE_SHOT_LIST`，它用于过滤下载失败或远端不存在的 shot。
 
-### 4.1 Download
+### 4.1 下载数据
 
 ```bash
 source .mast-download-env/bin/activate
@@ -260,7 +272,7 @@ done < "$ACTIVE_SHOT_LIST"
 
 不要继续使用原始 `$SHOT_LIST`。
 
-### 4.2 Build Machine Pickles
+### 4.2 生成 Machine Pickle
 
 ```bash
 source .mast-process-env/bin/activate
@@ -305,15 +317,22 @@ data/raw/mast/machine/<shot>/
 ├── MAST_active_coils.pickle
 ├── MAST_limiter.pickle
 ├── MAST_magentic_probes.pickle
-├── MAST_passive_coilds.pickle
+├── MAST_passive_coils.pickle
 └── MAST_wall.pickle
 ```
 
-`magentic` 和 `coilds` 是为兼容现有 FreeGSNKE loader 保留的历史拼写。
+`magentic` 是为兼容现有 FreeGSNKE loader 保留的历史拼写。早期版本曾写出
+`MAST_passive_coilds.pickle`；当前标准文件名已修正为
+`MAST_passive_coils.pickle`，loader 仍兼容读取旧 typo 文件名。
 
-### 4.3 Build Lao/EFIT NPZ
+### 4.3 生成 Lao/EFIT NPZ
 
-FreeGSNKE forward solve 需要每个 shot/time 对应的 profile 参数。统一 NPZ 路径：
+该步骤只从真实 MAST Level 2 Zarr 中拟合 Lao85 profile 参数，供后续扰动 synthetic
+样本使用。真实样本本身 **不需要** 运行 FreeGSNKE 正问题；真实标签直接来自 Zarr
+里已有的 EFIT equilibrium，例如 `equilibrium/psi`。
+
+FreeGSNKE forward solve 只用于扰动 Lao85 源项后的 synthetic variants。统一 Lao
+fit NPZ 路径：
 
 ```text
 data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
@@ -337,6 +356,7 @@ python scripts/build_lao_fit_npz.py \
 该脚本从 Level 2 Zarr 读取：
 
 ```text
+equilibrium/psi_norm
 equilibrium/dpressure_dpsi
 equilibrium/f_df_dpsi
 equilibrium/bvac_rmag
@@ -354,7 +374,14 @@ freegsnke_alpha
 freegsnke_beta
 ```
 
-### 4.4 Run FreeGSNKE Solves
+含义：
+
+- `shot/time`：真实 EFIT equilibrium 的时间点。
+- `ip/fvac/freegsnke_alpha/freegsnke_beta`：该 shot/time 对应的 Lao85 profile 参数。
+- 这些参数是后续 synthetic 源项扰动的基准；真实数据训练标签仍然读取
+  `data/raw/mast/<shot>.zarr/equilibrium/psi`。
+
+### 4.4 可选的 FreeGSNKE 基准求解
 
 ```bash
 source .freegsnke-solve-env/bin/activate
@@ -365,6 +392,11 @@ DATA_DIR=../data/raw/mast
 FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 SYNTH_DIR=../data/processed/synthetic
 ```
+
+注意：这一节是可选的 baseline solve，用来检查某个真实 `(shot,time)` 在未扰动
+Lao85 参数时是否容易收敛。正式的数据增强样本建议走 4.5 的 variant CSV +
+`run_lao85_variant_solve_batch.py` 批处理。不要对真实数据运行这里的求解来替代
+EFIT 标签；真实数据已经在 Zarr 中包含 `equilibrium/psi`。
 
 先检查拟合文件：
 
@@ -404,8 +436,8 @@ while read shot; do
       --time "$time" \
       --nx 65 \
       --ny 65 \
-      --tolerance 1e-3 \
-      --max-iterations 100 \
+      --tolerance 1e-8 \
+      --max-iterations 500 \
       --output-dir "$output_dir"
   done < "$TIME_GRID"
 done < "$ACTIVE_SHOT_LIST"
@@ -420,9 +452,425 @@ data/processed/synthetic/<shot>_t<time>/
 └── equilibrium.png
 ```
 
-如果某个 solve 没达到收敛阈值，`metadata.json` 和终端输出会记录状态。小网格 smoke run 可用于检查链路，不代表正式训练参数。
+如果某个 solve 没达到收敛阈值，`metadata.json` 和终端输出会记录状态。小网格 smoke run 可用于检查链路，不代表正式求解参数。
 
-## 5. Single-Shot Commands
+#### 正问题边界类型和源项
+
+当前 `scripts/run_freegsnke_forward.py` 调用的是 FreeGSNKE 官方
+`GSstaticsolver.NKGSsolver.solve(..., constrain=None)`。在 FreeGSNKE 中，
+`constrain=None` 会进入 forward mode，也就是固定线圈电流后求解非线性
+free-boundary Grad-Shafranov 正问题。
+
+因此这个正问题求解是 **free-boundary**，不是预先给定 LCFS 的 fixed-boundary
+求解。LCFS/limiter topology 是求解过程中由总磁通、X-point/O-point 和 limiter
+关系决定的；这也解释了为什么有些图能画出清晰 LCFS，有些图没有合格 LCFS。
+图片只是 QC 视图，训练准入以 solver metadata 的严格收敛和 finite `psi` 为准。
+
+当前正问题的主要源项是：
+
+- active/passive coil currents：从真实 Zarr 的 `pf_active` 和 `pf_passive` 电流插值得到，写入 tokamak 对象后产生 vacuum/tokamak flux `psi_tokamak`。
+- Lao85 plasma profile：从拟合 NPZ 读取 `Ip`、`fvac`、`freegsnke_alpha`、`freegsnke_beta`，实例化 `freegsnke.jtor_update.Lao85`，通过 `Jtor(psi_tokamak + psi_plasma)` 产生等离子体环向电流密度源项。
+- machine geometry / limiter：由每个 shot 的 machine pickle 提供线圈、被动结构和 limiter/wall 几何；FreeGSNKE 用 Green's function 计算 plasma current 对边界磁通的贡献。
+
+脚本没有传入 magnetic constraints，也不会优化 coil currents；它只在给定真实
+coil currents 和 Lao85 profile 的条件下求解 plasma response。
+
+### 4.5 Lao85 参数扰动规则
+
+基于真实数据生成 synthetic variants 时，只扰动已经拟合出来的 Lao85 profile
+参数，不直接扰动原始诊断数据：
+
+```text
+Ip'      = Ip_fit * ip_scale
+fvac'    = fvac_fit * fvac_scale
+alpha_i' = alpha_i_fit * alpha_scale + alpha_offset
+beta_i'  = beta_i_fit  * beta_scale  + beta_offset
+```
+
+`scripts/run_freegsnke_forward.py` 支持的扰动参数：
+
+```bash
+--ip-scale
+--fvac-scale
+--alpha-scale
+--beta-scale
+--alpha-offset
+--beta-offset
+```
+
+`src/mast_bridge/simulation/variants.py` 当前恢复为最初的 deterministic uniform
+random batch variant rows。做法是：对每个已经在
+`all_zarr_lao_parameter_fits.npz` 中拟合成功的 `(shot,time)`，每个 variant 独立从
+固定边界内做均匀随机扰动。`seed` 固定后 CSV 可复现。
+
+当前默认采样边界恢复为最初的大范围候选：
+
+```text
+ip_scale          in [0.95, 1.05]
+fvac_scale        in [0.99, 1.01]
+alpha_scale       in [0.98, 1.02]
+beta_scale        in [0.98, 1.02]
+alpha_offset      in [-0.01, 0.01]
+beta_offset       in [-0.01, 0.01]
+coil_current_scale in [0.97, 1.03]
+```
+
+采样代码里有注释说明未来如何替换采样方式：优先修改
+`src/mast_bridge/simulation/variants.py` 中的 `build_variant_rows()`。如果以后要改成
+Gaussian、Latin Hypercube 或基于基准收敛性的预筛选采样，只需要保持输出 row 字段
+不变，后续 FreeGSNKE 批量求解脚本就不需要改。
+
+从拟合 NPZ 生成采样任务 CSV：
+
+```bash
+FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+VARIANT_CSV=../data/manifests/lao85_uniform_variants.csv
+
+python scripts/build_lao85_variant_rows.py \
+  --fit-path "$FIT_PATH" \
+  --variants-per-point 5 \
+  --seed 20260729 \
+  --min-time 0.10 \
+  --max-time 0.30 \
+  --output "$VARIANT_CSV"
+```
+
+建议先使用 `--min-time/--max-time` 避开 shot startup 或 ramp-down 阶段。例如从
+CSV 开头直接跑时，`11766, t=0.03s` 附近的样本多为 early limiter plasma，图片会
+明显比平顶段或较稳定阶段更奇怪；这不一定是采样错误，但不适合作为
+第一批训练样本。若研究目标需要包含启动阶段，可以单独建一个 startup 数据集，不要
+和主训练集混在一起。
+
+CSV 每行包含：
+
+```text
+shot,target_time,variant_id,sampling_method,
+ip_scale,fvac_scale,alpha_scale,beta_scale,alpha_offset,beta_offset,coil_current_scale
+```
+
+批量正问题求解并立即 strict filter：
+
+```bash
+source .freegsnke-solve-env/bin/activate
+
+VARIANT_CSV=../data/manifests/lao85_uniform_variants.csv
+SYNTH_DIR=../data/processed/synthetic_lao85_uniform_iter500
+MANIFEST_DIR=../data/manifests
+
+python scripts/run_lao85_variant_solve_batch.py \
+  --variant-csv "$VARIANT_CSV" \
+  --data-dir ../data/raw/mast \
+  --fit-path ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz \
+  --synthetic-root "$SYNTH_DIR" \
+  --manifest-dir "$MANIFEST_DIR" \
+  --prefix tokamark_lao85_uniform_iter500 \
+  --task task_1-3 \
+  --nx 65 \
+  --ny 65 \
+  --tolerance 1e-8 \
+  --max-solver-tolerance 1e-8 \
+  --max-iterations 500 \
+  --limit 20
+```
+
+`--limit 20` 用于先跑一个小批量确认环境和收敛筛选；确认后删除该参数即可继续跑
+CSV 中剩余样本。脚本默认跳过已经存在 `equilibrium.npz` 和 `metadata.json` 的样本；
+如果需要覆盖重跑，显式加 `--rerun-existing`。
+
+注意：正式筛选建议使用 `--max-iterations 500`，不要继续沿用早期 smoke run 的
+`100`。本地测试显示，`11772_t0.1` 的 5 个 uniform variants 在
+`max_iterations=500` 下全部达到 `1e-8` strict convergence，其中一个样本用了
+`239` 次迭代；如果只允许 100 次，会提前截断这类本来可以收敛的样本。
+
+运行时终端会逐个样本打印进度，例如：
+
+```text
+[solve-start] row=0 sample=11766_t0.1_v000 shot=11766 time=0.1 variant=v000
+[solve-solved] row=0 sample=11766_t0.1_v000 return_code=0
+```
+
+如果长时间只看到 `[solve-start]`，通常表示当前 FreeGSNKE 单个正问题仍在求解。脚本
+会在每个样本结束后实时更新 batch report，可以另开一个终端查看：
+
+```bash
+tail -f ../data/manifests/tokamark_lao85_uniform_iter500_batch_report.jsonl
+```
+
+该脚本会写出：
+
+```text
+data/processed/synthetic_lao85_uniform_iter500/<shot>_t<time>_<variant_id>/
+data/manifests/tokamark_lao85_uniform_iter500_batch_report.jsonl
+data/manifests/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl
+data/manifests/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
+```
+
+`batch_report.jsonl` 记录每个采样 row 的执行状态；accepted/rejected manifest 由
+同一个脚本在求解结束后调用 `scripts/build_synthetic_manifest.py` 生成。训练时只使用
+`*_synthetic_accepted.jsonl`，不要把 rejected 样本并入训练。
+
+注意：variant row 中预留了 `coil_current_scale` 字段，但当前
+`run_freegsnke_forward.py` 还没有把这个缩放应用到 active/passive coil currents。
+当前已生成的小样本应理解为“真实线圈电流 + Lao85 profile 参数扰动”的 synthetic
+数据。
+
+完整语义是：
+
+```text
+real sample:
+  input  = real shot/time diagnostics
+  label  = real Zarr EFIT equilibrium/psi
+  solve  = no FreeGSNKE forward solve
+
+synthetic sample:
+  input  = same real shot/time machine + coil currents
+  source = Lao85 parameters fitted from the corresponding real shot/time, then perturbed
+  label  = FreeGSNKE free-boundary forward solve after perturbation
+  keep   = only if solver_converged and solver_final_tolerance <= 1e-8
+```
+
+### 4.6 过滤收敛的仿真样本
+
+训练 manifest 不直接扫描目录拼接样本，必须先运行严格过滤脚本。默认规则是：
+
+- `solver_converged == true`
+- `solver_final_tolerance <= 1e-8`
+- `equilibrium.npz` 中 `psi` 是 finite 的 `65x65` 网格
+
+过滤过程写在 `src/mast_bridge/dataset/synthetic_manifest.py`，核心函数是
+`rejection_reason()`、`synthetic_entries()` 和 `rejected_samples()`。执行流程是：
+
+1. 扫描 `--synthetic-root` 下每个 synthetic sample 目录。
+2. 检查是否同时存在 `metadata.json` 和 `equilibrium.npz`。
+3. 读取 `metadata.json` 中 FreeGSNKE 写出的求解状态。
+4. 若 `solver_converged` 不是 `true`，样本进入 rejected，原因是
+   `solver_not_converged`。
+5. 若缺少或无法解析 `solver_final_tolerance`，样本进入 rejected，原因是
+   `solver_tolerance_missing`。
+6. 若 `solver_final_tolerance > --max-solver-tolerance`，样本进入 rejected，原因是
+   `solver_tolerance_above_threshold`。当前默认阈值是 `1e-8`。
+7. 若 `equilibrium.npz` 中 `psi` 不存在、无法读取或包含非 finite 值，样本进入
+   rejected，原因是 `invalid_equilibrium`。
+8. 只有所有检查都通过的样本才写入 accepted manifest，作为训练候选样本。
+
+未通过的样本不会被物理删除；它们会进入 rejected report，用于后续分析
+shot/time/扰动参数为什么不收敛。也就是说，目录里的仿真结果是原始求解输出，
+训练集入口必须以 `*_synthetic_accepted.jsonl` 为准。
+
+如果使用 `scripts/run_lao85_variant_solve_batch.py`，脚本会在批量求解结束后自动
+调用同一个过滤逻辑生成 accepted/rejected manifest。若求解被中断，或者你手动改了
+`--max-solver-tolerance`，可以单独重跑下面这个过滤命令；它不会重新运行
+FreeGSNKE，只会重新扫描已有 `metadata.json` 和 `equilibrium.npz`。
+
+```bash
+source .freegsnke-solve-env/bin/activate
+
+SYNTH_DIR=../data/processed/synthetic_lao85_uniform_iter500
+MANIFEST_DIR=../data/manifests
+mkdir -p "$MANIFEST_DIR"
+
+python scripts/build_synthetic_manifest.py \
+  --synthetic-root "$SYNTH_DIR" \
+  --output "$MANIFEST_DIR/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl" \
+  --rejected-output "$MANIFEST_DIR/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl" \
+  --task task_1-3 \
+  --max-solver-tolerance 1e-8
+```
+
+输出：
+
+```text
+data/manifests/
+├── tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl
+└── tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
+```
+
+`accepted` 才能进入后续数据集候选；`rejected` 只作为 QC 报告，不进入对比实验数据集。
+当前 rejected report 会记录稳定的 rejection reason，例如
+`solver_not_converged`、`solver_tolerance_missing`、
+`solver_tolerance_above_threshold` 或 `invalid_equilibrium`。
+
+### 4.7 构建三组对比实验 Manifest
+
+为了做三组对比实验，使用严格过滤后的 synthetic manifest 反推出对应的真实 `shot/time`，生成：
+
+1. 只有真实数据：`*_real_only.jsonl`
+2. 只有仿真数据：`*_synthetic_only.jsonl`
+3. 真实数据 + 仿真数据：`*_real_plus_synthetic.jsonl`
+
+```bash
+source .freegsnke-solve-env/bin/activate
+
+MANIFEST_DIR=../data/manifests
+DATA_DIR=../data/raw/mast
+FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+
+python scripts/build_experiment_manifests.py \
+  --accepted-synthetic "$MANIFEST_DIR/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl" \
+  --raw-data-dir "$DATA_DIR" \
+  --fit-path "$FIT_PATH" \
+  --output-dir "$MANIFEST_DIR" \
+  --prefix tokamark_lao85_uniform_iter500 \
+  --task task_1-3
+```
+
+输出：
+
+```text
+data/manifests/
+├── tokamark_lao85_uniform_iter500_real_only.jsonl
+├── tokamark_lao85_uniform_iter500_synthetic_only.jsonl
+└── tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl
+```
+
+这三个 manifest 使用同一批父 `shot/time` 的物理点，便于后续只比较训练数据来源差异。
+当前 `uniform + max_iterations=500 + 1e-8 strict filter` 数据集示例为：
+
+```text
+tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl      120 samples
+tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl       95 samples
+tokamark_lao85_uniform_iter500_real_only.jsonl                40 samples
+tokamark_lao85_uniform_iter500_synthetic_only.jsonl          120 samples
+tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl     160 samples
+```
+
+其中 `synthetic_only` manifest 就是过滤后的仿真数据集入口；它只包含
+`tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl` 中通过 `1e-8` strict filter
+的 FreeGSNKE 样本。`real_only` 的 40 个真实点来自 accepted synthetic manifest
+反推出来的唯一 `(parent_shot, target_time)` 集合；`real_plus_synthetic` 是两者
+并集。这样三组实验共享同一批父物理点，避免“真实组”和“仿真组”因为 shot/time
+覆盖不同而混入额外变量。
+
+real manifest row 的 `label_source` 是 `zarr_equilibrium_psi`，表示真实标签从
+真实 Zarr 的 EFIT `equilibrium/psi` 读取；`fit_path` 只表示 Lao85 profile 参数
+来源，不是 real label。synthetic manifest row 的 `equilibrium_path` 才是
+FreeGSNKE 求解后的 `equilibrium.npz`。
+
+## 5. 当前 uniform_iter500 复现流程
+
+这一节是当前已经跑通的数据生成流程，对应 `docs/reproduce_uniform_iter500.md`。
+它复现的是 `uniform_random + max_iterations=500 + strict 1e-8 filter` 的小规模
+仿真数据集，不包含训练。
+
+从项目目录运行：
+
+```bash
+cd /Users/mingdonghe/pj/fusion-workspace/mast-bridge
+source .freegsnke-solve-env/bin/activate
+```
+
+确认已有输入：
+
+```text
+../data/raw/mast/<shot>.zarr
+../data/raw/mast/machine/<shot>/
+../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+```
+
+machine 目录里的标准文件名应包含：
+
+```text
+MAST_active_coils.pickle
+MAST_limiter.pickle
+MAST_magentic_probes.pickle
+MAST_passive_coils.pickle
+MAST_wall.pickle
+```
+
+旧文件名 `MAST_passive_coilds.pickle` 是历史 typo，只作为兼容读取 fallback；
+新生成的数据应使用 `MAST_passive_coils.pickle`。
+
+生成 Lao85 uniform 随机扰动表：
+
+```bash
+FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+VARIANT_CSV=../data/manifests/lao85_uniform_variants.csv
+
+python scripts/build_lao85_variant_rows.py \
+  --fit-path "$FIT_PATH" \
+  --variants-per-point 5 \
+  --seed 20260729 \
+  --min-time 0.10 \
+  --max-time 0.30 \
+  --output "$VARIANT_CSV"
+```
+
+批量运行 FreeGSNKE 正问题求解：
+
+```bash
+SYNTH_DIR=../data/processed/synthetic_lao85_uniform_iter500
+MANIFEST_DIR=../data/manifests
+
+python scripts/run_lao85_variant_solve_batch.py \
+  --variant-csv "$VARIANT_CSV" \
+  --data-dir ../data/raw/mast \
+  --fit-path "$FIT_PATH" \
+  --synthetic-root "$SYNTH_DIR" \
+  --manifest-dir "$MANIFEST_DIR" \
+  --prefix tokamark_lao85_uniform_iter500 \
+  --task task_1-3 \
+  --nx 65 \
+  --ny 65 \
+  --tolerance 1e-8 \
+  --max-solver-tolerance 1e-8 \
+  --max-iterations 500
+```
+
+这里推荐 `--max-iterations 500`。之前使用 `100` 时，有些样本还没达到
+`1e-8` 就停止；这些样本会被 strict filter 拒绝。脚本会跳过已经同时包含
+`equilibrium.npz` 和 `metadata.json` 的样本，所以中断后可以直接重跑。
+
+查看批处理进度：
+
+```bash
+tail -f ../data/manifests/tokamark_lao85_uniform_iter500_batch_report.jsonl
+```
+
+重新扫描已有求解结果并生成严格过滤 manifest：
+
+```bash
+python scripts/build_synthetic_manifest.py \
+  --synthetic-root ../data/processed/synthetic_lao85_uniform_iter500 \
+  --output ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl \
+  --rejected-output ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl \
+  --task task_1-3 \
+  --max-solver-tolerance 1e-8
+```
+
+只有 `*_synthetic_accepted.jsonl` 进入后续数据集构建。筛选条件是
+`metadata.json` 中 `solver_converged=true`，且 `solver_final_tolerance <= 1e-8`。
+
+构建三组对比实验 manifest：
+
+```bash
+python scripts/build_experiment_manifests.py \
+  --accepted-synthetic ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl \
+  --raw-data-dir ../data/raw/mast \
+  --fit-path "$FIT_PATH" \
+  --output-dir ../data/manifests \
+  --prefix tokamark_lao85_uniform_iter500 \
+  --task task_1-3
+```
+
+输出：
+
+```text
+../data/manifests/tokamark_lao85_uniform_iter500_real_only.jsonl
+../data/manifests/tokamark_lao85_uniform_iter500_synthetic_only.jsonl
+../data/manifests/tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl
+```
+
+当前本地过滤后的计数示例：
+
+```text
+synthetic_accepted:     120
+synthetic_rejected:      95
+real_only:               40
+synthetic_only:         120
+real_plus_synthetic:    160
+```
+
+## 6. 单个 Shot 命令
 
 下载一个 shot：
 
@@ -471,14 +919,14 @@ python scripts/run_freegsnke_forward.py \
   --time 0.16 \
   --nx 65 \
   --ny 65 \
-  --tolerance 1e-3 \
-  --max-iterations 100 \
+  --tolerance 1e-8 \
+  --max-iterations 500 \
   --output-dir ../data/processed/synthetic/11771_t0.16
 ```
 
-## 6. Data Contract
+## 7. 数据约定
 
-### 6.1 Raw and Real Data
+### 7.1 Raw 和 Real 数据
 
 MAST Level 2 Zarr 是默认输入。它通常包含：
 
@@ -500,9 +948,13 @@ data/raw/mast/machine/<shot>/*.pickle
 data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 ```
 
+真实标签直接来自 `data/raw/mast/<shot>.zarr/equilibrium/psi`。Lao fit NPZ 是
+从真实 EFIT profile 拟合出的 profile 参数表，用来构造 synthetic perturbation；
+它不是真实样本的标签文件。
+
 Level 1 保留原始诊断名和原始采集形态，不作为默认训练输入。
 
-### 6.2 Synthetic Data
+### 7.2 仿真数据
 
 `run_freegsnke_forward.py` 会保存：
 
@@ -525,8 +977,17 @@ metadata.json:
   fvac
   alpha
   beta
+  lao85_perturbation
   grid
+  target_relative_tolerance
   solver_status
+  solver_converged
+  solver_final_tolerance
+  solver_requested_tolerance
+  solver_iterations
+  xpt_count
+  opt_count
+  flag_limiter
 ```
 
 固定 geometry 和随时间变化的状态分开记录：
@@ -540,7 +1001,7 @@ fixed machine geometry
 
 不要为每个时间点重复保存完全相同的 machine geometry payload。
 
-### 6.3 Manifest
+### 7.3 Manifest 清单
 
 训练、验证、测试必须按 shot 划分。同一个 shot 的真实样本和所有 synthetic variants 必须在同一个 split，避免信息泄漏。
 
@@ -548,12 +1009,17 @@ fixed machine geometry
 
 ```text
 data/manifests/
-├── tokamark_simple_real.jsonl
-├── tokamark_simple_synthetic.jsonl
-├── tokamark_simple_train.jsonl
-├── tokamark_simple_val.jsonl
-└── tokamark_simple_test.jsonl
+├── tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl
+├── tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
+├── tokamark_lao85_uniform_iter500_real_only.jsonl
+├── tokamark_lao85_uniform_iter500_synthetic_only.jsonl
+└── tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl
 ```
+
+`*_synthetic_accepted.jsonl` 由 `scripts/build_synthetic_manifest.py` 生成；不要手写，
+也不要把 rejected 样本并入 train/val/test。`*_real_only.jsonl`、
+`*_synthetic_only.jsonl` 和 `*_real_plus_synthetic.jsonl` 由
+`scripts/build_experiment_manifests.py` 生成。
 
 每行至少包含：
 
@@ -566,43 +1032,11 @@ data/manifests/
   "data_path": "data/processed/synthetic/11771_t0.16/equilibrium.npz",
   "metadata_path": "data/processed/synthetic/11771_t0.16/metadata.json",
   "split": "train",
-  "task": "tokamark_simple"
+  "task": "task_1-3"
 }
 ```
 
-## 7. Tokamind/Tokamark Training Input
-
-第一阶段保持任务简单：从 machine + currents + Lao profile 预测 equilibrium flux map。
-
-输入建议：
-
-```text
-machine geometry reference
-coil currents
-Ip / Lao profile parameters
-R grid
-Z grid
-```
-
-目标：
-
-```text
-psi
-psi_axis
-psi_bndry
-```
-
-扩展顺序：
-
-```text
-2 shots x 2 times       smoke test
-10-20 shots x 5 times   local dev
-200-2000 shots x 5-20 times server training data
-```
-
-跑通后再加入 Lao 参数扰动，为每个 shot/time 生成多个 variant。
-
-## 8. Verification
+## 8. 验证
 
 项目测试不下载 MAST 数据，也不运行长时间 FreeGSNKE solve：
 
@@ -641,13 +1075,13 @@ python scripts/plot_mast_geometry.py --shot 11771
 data/processed/geometry/11771.png
 ```
 
-## 9. FAQ
+## 9. 常见问题
 
-### Missing downloaded shot
+### 下载的 shot 缺失
 
 如果原始 `SHOT_LIST` 里有 `11770`，但本地没有 `11770.zarr`，后续步骤会失败。先生成 `ACTIVE_SHOT_LIST`，后续步骤只读 `ACTIVE_SHOT_LIST`。
 
-### Missing Lao fit NPZ
+### Lao fit NPZ 缺失
 
 先在 `.mast-process-env` 运行：
 
@@ -658,14 +1092,14 @@ python scripts/build_lao_fit_npz.py \
   --output ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 ```
 
-### NumPy import error in FreeGSNKE
+### FreeGSNKE 中 NumPy 导入错误
 
 确认当前 shell 使用 `.freegsnke-solve-env`，并重新执行 FreeGSNKE 环境里的 NumPy/SciPy/Zarr override。不要把其他环境的 site-packages 加入 `sys.path`。
 
-### Processing environment imports FreeGSNKE
+### 数据处理环境误导入 FreeGSNKE
 
 不需要。下载、inspect、machine build 和 Lao NPZ 都在 `.mast-process-env` 完成；FreeGSNKE 只在最后求解阶段导入。
 
-### Path confusion
+### 路径混淆
 
 从 `mast-bridge` 目录执行命令。默认数据目录是 `fusion-workspace/data/...`，不是 `external/LARGE_MODEL_FUSION-master/mast_data`，也不是 `data_analysis_report/`。

@@ -99,6 +99,8 @@ class MachineFromZarrTests(unittest.TestCase):
             root = Path(temp_dir)
             paths = write_machine_pickles(self._fixture(root), root / "machine")
             self.assertEqual(set(p.name for p in paths.values()), set(REQUIRED_OUTPUTS.values()))
+            self.assertIn("MAST_passive_coils.pickle", {p.name for p in paths.values()})
+            self.assertNotIn("MAST_passive_coilds.pickle", {p.name for p in paths.values()})
             with self.assertRaises(FileExistsError):
                 write_machine_pickles(root / "11766.zarr", root / "machine")
             with paths["active_coils"].open("rb") as handle:
