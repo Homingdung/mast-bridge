@@ -163,11 +163,30 @@ def _magnetic_probe_payload(root: Any) -> dict[str, list[dict[str, Any]]]:
     geometry_channels = _values(group, "flux_loop_geometry_channel")
     r = _values(group, "flux_loop_r")
     z = _values(group, "flux_loop_z")
+
+    # flux_loop_channel is the measured subset; flux_loop_geometry_channel is
+    # the full geometry list. Join them by normalized name, not by index.
+    geometry_by_name = {
+        str(name): np.array([r[index], z[index]])
+        for index, name in enumerate(geometry_channels)
+        if index < len(r) and index < len(z)
+    }
+
+    def flux_loop_geometry_name(channel: Any) -> str:
+        return "FL_" + str(channel).replace("/", "_")
+
     flux_loops = [
         {
             "name": str(channels[index]) if index < len(channels) else f"flux_loop_channel_{index}",
-            "geometry_name": str(geometry_channels[index]),
-            "position": np.array([r[index], z[index]]),
+            "geometry_name": flux_loop_geometry_name(channels[index])
+            if index < len(channels)
+            else str(geometry_channels[index]),
+            "position": geometry_by_name.get(
+                flux_loop_geometry_name(channels[index]),
+                np.array([r[index], z[index]]),
+            )
+            if index < len(channels)
+            else np.array([r[index], z[index]]),
         }
         for index in range(len(r))
     ]
@@ -175,8 +194,9 @@ def _magnetic_probe_payload(root: Any) -> dict[str, list[dict[str, Any]]]:
     pickups: list[dict[str, Any]] = []
     pickup_specs = (
         ("CCBV", "b_field_pol_probe_ccbv", np.array([0.0, 0.0, 1.0])),
-        ("OBR", "b_field_pol_probe_obr", np.array([-1.0, 0.0, 0.0])),
-        ("OBV", "b_field_pol_probe_obv", np.array([0.0, 0.0, -1.0])),
+        # These directions match the sign convention of Level 2 *_field arrays.
+        ("OBR", "b_field_pol_probe_obr", np.array([1.0, 0.0, 0.0])),
+        ("OBV", "b_field_pol_probe_obv", np.array([0.0, 0.0, 1.0])),
     )
     for family, prefix, orientation in pickup_specs:
         channels = _values(group, f"{prefix}_channel")

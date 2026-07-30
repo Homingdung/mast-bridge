@@ -53,10 +53,13 @@ class MachineFromZarrTests(unittest.TestCase):
         wall.create_array("limiter_z", data=np.array([-1.0, 1.0]))
 
         magnetics = z.create_group("magnetics")
-        magnetics.create_array("flux_loop_channel", data=np.array(["FL1"], dtype="U3"))
-        magnetics.create_array("flux_loop_geometry_channel", data=np.array(["geo1"], dtype="U4"))
-        magnetics.create_array("flux_loop_r", data=np.array([0.7]))
-        magnetics.create_array("flux_loop_z", data=np.array([0.8]))
+        magnetics.create_array("flux_loop_channel", data=np.array(["CC03", "P3U/1"], dtype="U5"))
+        magnetics.create_array(
+            "flux_loop_geometry_channel",
+            data=np.array(["FL_P2U_1", "FL_CC03", "FL_P3U_1"], dtype="U8"),
+        )
+        magnetics.create_array("flux_loop_r", data=np.array([0.7, 0.18, 1.16]))
+        magnetics.create_array("flux_loop_z", data=np.array([0.8, 0.62, 1.08]))
         magnetics.create_array("b_field_pol_probe_ccbv_channel", data=np.array(["P1"], dtype="U2"))
         magnetics.create_array("b_field_pol_probe_ccbv_geometry_channel", data=np.array(["p1"], dtype="U2"))
         magnetics.create_array("b_field_pol_probe_ccbv_r", data=np.array([0.9]))
@@ -81,8 +84,20 @@ class MachineFromZarrTests(unittest.TestCase):
         self.assertEqual(payloads["active_coils"]["P2IL"]["source_channel"], "P2IL FEED")
         self.assertEqual(len(payloads["passive_coils"]), 2)
         self.assertEqual(payloads["limiter"], [{"R": 1.0, "Z": -1.0}, {"R": 1.1, "Z": 1.0}])
-        self.assertEqual(payloads["magnetic_probes"]["flux_loops"][0]["name"], "FL1")
+        self.assertEqual(payloads["magnetic_probes"]["flux_loops"][0]["name"], "CC03")
+        np.testing.assert_allclose(
+            payloads["magnetic_probes"]["flux_loops"][0]["position"], [0.18, 0.62]
+        )
+        self.assertEqual(payloads["magnetic_probes"]["flux_loops"][1]["name"], "P3U/1")
+        np.testing.assert_allclose(
+            payloads["magnetic_probes"]["flux_loops"][1]["position"], [1.16, 1.08]
+        )
         self.assertEqual(payloads["magnetic_probes"]["pickups"][0]["family"], "CCBV")
+        pickups = payloads["magnetic_probes"]["pickups"]
+        obr = next(item for item in pickups if item["family"] == "OBR")
+        obv = next(item for item in pickups if item["family"] == "OBV")
+        np.testing.assert_allclose(obr["orientation_vector"], [1.0, 0.0, 0.0])
+        np.testing.assert_allclose(obv["orientation_vector"], [0.0, 0.0, 1.0])
 
     def test_normalizes_passive_widths_for_freegsnke(self):
         with tempfile.TemporaryDirectory() as temp_dir:

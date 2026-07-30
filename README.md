@@ -24,8 +24,9 @@ download MAST Level 2
 - [5. 当前 uniform_iter500 复现流程](#5-当前-uniform_iter500-复现流程)
 - [6. 单个 Shot 命令](#6-单个-shot-命令)
 - [7. 数据约定](#7-数据约定)
-- [8. 验证](#8-验证)
-- [9. 常见问题](#9-常见问题)
+- [8. TokaMind 小规模训练](#8-tokamind-小规模训练)
+- [9. 验证](#9-验证)
+- [10. 常见问题](#10-常见问题)
 
 ## 1. 工作区
 
@@ -162,6 +163,42 @@ PY
 ```
 
 如果之后再次运行 `pip install -e "../external/freegsnke[freegs4e]"`，pip 可能把 NumPy 降回 1.26，需要重新执行上面的 override。
+
+### 2.4 tokamind-train 训练环境
+
+训练阶段使用独立环境，放在 `mast-bridge/` 目录下：
+
+```bash
+cd fusion-workspace/mast-bridge
+python3.12 -m venv .tokamind-train-env
+source .tokamind-train-env/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+
+# 按你的机器和网络选择 CPU / CUDA / MPS 对应的 PyTorch 安装方式。
+# macOS Apple Silicon 常用:
+python -m pip install torch torchvision torchaudio
+
+python -m pip install -e . --no-deps
+python -m pip install -e ../external/tokamind
+python -m pip install numpy "zarr>=3,<4" xarray scipy pyyaml tqdm "psutil>=7.2"
+```
+
+确认：
+
+```bash
+python - <<'PY'
+import torch
+import zarr
+import mmt
+
+print("torch:", torch.__version__)
+print("mps_available:", torch.backends.mps.is_available() if hasattr(torch.backends, "mps") else False)
+print("zarr:", zarr.__version__)
+print("mmt:", mmt.__file__)
+PY
+```
+
+`.tokamind-train-env/` 是本地环境目录，不应提交。
 
 ## 3. 配置运行规模
 
@@ -360,6 +397,7 @@ equilibrium/psi_norm
 equilibrium/dpressure_dpsi
 equilibrium/f_df_dpsi
 equilibrium/bvac_rmag
+equilibrium/magnetic_axis_r
 magnetics/ip
 ```
 
@@ -378,6 +416,8 @@ freegsnke_beta
 
 - `shot/time`：真实 EFIT equilibrium 的时间点。
 - `ip/fvac/freegsnke_alpha/freegsnke_beta`：该 shot/time 对应的 Lao85 profile 参数。
+  其中 `fvac = abs(bvac_rmag * magnetic_axis_r)`，即 FreeGSNKE Lao85 需要的
+  vacuum toroidal field radius product `R * B_tor`，单位是 `T*m`。
 - 这些参数是后续 synthetic 源项扰动的基准；真实数据训练标签仍然读取
   `data/raw/mast/<shot>.zarr/equilibrium/psi`。
 
@@ -471,6 +511,8 @@ free-boundary Grad-Shafranov 正问题。
 - active/passive coil currents：从真实 Zarr 的 `pf_active` 和 `pf_passive` 电流插值得到，写入 tokamak 对象后产生 vacuum/tokamak flux `psi_tokamak`。
 - Lao85 plasma profile：从拟合 NPZ 读取 `Ip`、`fvac`、`freegsnke_alpha`、`freegsnke_beta`，实例化 `freegsnke.jtor_update.Lao85`，通过 `Jtor(psi_tokamak + psi_plasma)` 产生等离子体环向电流密度源项。
 - machine geometry / limiter：由每个 shot 的 machine pickle 提供线圈、被动结构和 limiter/wall 几何；FreeGSNKE 用 Green's function 计算 plasma current 对边界磁通的贡献。
+- solve grid：从真实 Zarr 的 `equilibrium/major_radius` 和 `equilibrium/z` 读取
+  `Rmin/Rmax/Zmin/Zmax`，使 synthetic `psi` 网格边界和 MAST EFIT 网格一致。
 
 脚本没有传入 magnetic constraints，也不会优化 coil currents；它只在给定真实
 coil currents 和 Lao85 profile 的条件下求解 plasma response。
@@ -485,6 +527,7 @@ Ip'      = Ip_fit * ip_scale
 fvac'    = fvac_fit * fvac_scale
 alpha_i' = alpha_i_fit * alpha_scale + alpha_offset
 beta_i'  = beta_i_fit  * beta_scale  + beta_offset
+Icoil'   = Icoil_real  * coil_current_scale
 ```
 
 `scripts/run_freegsnke_forward.py` 支持的扰动参数：
@@ -496,6 +539,7 @@ beta_i'  = beta_i_fit  * beta_scale  + beta_offset
 --beta-scale
 --alpha-offset
 --beta-offset
+--coil-current-scale
 ```
 
 `src/mast_bridge/simulation/variants.py` 当前恢复为最初的 deterministic uniform
@@ -609,10 +653,10 @@ data/manifests/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
 同一个脚本在求解结束后调用 `scripts/build_synthetic_manifest.py` 生成。训练时只使用
 `*_synthetic_accepted.jsonl`，不要把 rejected 样本并入训练。
 
-注意：variant row 中预留了 `coil_current_scale` 字段，但当前
-`run_freegsnke_forward.py` 还没有把这个缩放应用到 active/passive coil currents。
-当前已生成的小样本应理解为“真实线圈电流 + Lao85 profile 参数扰动”的 synthetic
-数据。
+注意：`coil_current_scale` 会同步作用到 active 和 passive coil currents，并写入
+`metadata.json` 的 `coil_currents`。早期已经生成的 synthetic 数据如果 metadata
+中没有 `coil_current_scale` 或仍使用硬编码网格，应视为旧版本样本；需要用当前代码
+重跑才能得到单位、线圈扰动和网格边界都一致的新样本。
 
 完整语义是：
 
@@ -978,6 +1022,7 @@ metadata.json:
   alpha
   beta
   lao85_perturbation
+  coil_current_scale
   grid
   target_relative_tolerance
   solver_status
@@ -1001,7 +1046,83 @@ fixed machine geometry
 
 不要为每个时间点重复保存完全相同的 machine geometry payload。
 
-### 7.3 Manifest 清单
+### 7.3 磁诊断合成对比约定
+
+`scripts/compare_freegsnke_magnetic_diagnostics.py` 用 FreeGSNKE 求出的
+equilibrium 合成磁诊断，并和 MAST Level 2 的真实诊断比较。第一版只比较：
+
+```text
+magnetics/flux_loop_flux
+magnetics/b_field_pol_probe_{ccbv,obr,obv}_field
+```
+
+这一步有几个容易踩坑的数据约定，必须保留：
+
+1. **Flux loop 通道不能按 index 绑定几何。**
+   `magnetics/flux_loop_channel` 只有实测信号通道，例如 `CC03`、`P3U/1`；
+   `magnetics/flux_loop_geometry_channel` 是完整几何列表，例如 `FL_CC03`、
+   `FL_P3U_1`。两者长度和顺序不一定一一对应。构造 FreeGSNKE probe 时必须按通道名
+   映射几何：
+
+   ```text
+   CC03  -> FL_CC03
+   P3U/1 -> FL_P3U_1
+   ```
+
+   早期按 index 配对会把 `CC03` 放到 `FL_P2U_1` 的位置，导致 flux-loop 合成量整体
+   偏离。
+
+2. **Flux loop 单位需要乘 `2π`。**
+   FreeGSNKE/EFIT 的 poloidal flux 约定是 `Wb/(2π)`；MAST Level 2
+   `magnetics/flux_loop_flux` 是 Wb 量级。比较脚本默认对 FreeGSNKE flux-loop
+   模型值乘 `2π`，并把实际使用的 `flux_loop_scale` 写入
+   `diagnostic_summary.json`。
+
+3. **Pickup probe 方向要匹配 Level 2 field 约定。**
+   `CCBV` 使用 `[0, 0, 1]`，`OBR` 使用 `[1, 0, 0]`，`OBV` 使用 `[0, 0, 1]`。
+   旧 pickle 曾把 `OBR/OBV` 设为相反方向，会造成整族 pickup 符号反转。
+
+比较脚本不会直接修改 `data/raw/mast/machine/<shot>/` 下的旧 pickle；它会复制一份
+临时 machine payload，在临时目录中修正 flux-loop 几何和 pickup 方向后再交给
+FreeGSNKE。重新运行 `scripts/build_machine_from_zarr.py --overwrite` 生成的新 pickle
+会包含这些修正。
+
+示例：
+
+```bash
+source .freegsnke-solve-env/bin/activate
+
+python scripts/compare_freegsnke_magnetic_diagnostics.py \
+  --shot 11771 \
+  --time 0.18 \
+  --nx 65 \
+  --ny 65 \
+  --tolerance 1e-8 \
+  --max-iterations 500
+```
+
+输出：
+
+```text
+data/processed/diagnostic_comparisons/<shot>_t<time>/
+  freegsnke_equilibrium.npz
+  diagnostic_comparison.npz
+  diagnostic_comparison.csv
+  diagnostic_summary.json
+
+artifacts/freegsnke_magnetic_diagnostics/<shot>_t<time>/
+  diagnostic_observed_vs_model.png
+  current_global_constraint.png
+```
+
+`diagnostic_comparison.csv` 里的 `model` 已经应用了上述约定：flux-loop 是 Wb，
+pickup 是按 Level 2 方向约定得到的 `B.n`。
+
+`current_global_constraint.png` 单独画总等离子体电流约束：`observed` 来自
+`magnetics/ip` 在目标时刻的插值，`model` 是传给 Lao85/FreeGSNKE 的 `Ip`。
+同样的数值也会写入 `diagnostic_summary.json` 的 `current_constraint` 字段。
+
+### 7.4 Manifest 清单
 
 训练、验证、测试必须按 shot 划分。同一个 shot 的真实样本和所有 synthetic variants 必须在同一个 split，避免信息泄漏。
 
@@ -1036,7 +1157,111 @@ data/manifests/
 }
 ```
 
-## 8. 验证
+## 8. TokaMind 小规模训练
+
+当前训练入口是 manifest 版小任务，用于先跑通真实/仿真/混合三组数据到 TokaMind
+transformer 的链路：
+
+```text
+manifest row
+  -> low-dimensional fusion-state features
+  -> TokaMind MultiModalTransformer
+  -> 65 x 65 equilibrium/psi
+```
+
+输入特征不是 Tokamark 官方 `task_1-3` 的完整磁诊断时序，而是现阶段已经稳定生成的
+物理状态量：
+
+```text
+target_time
+Ip
+fvac
+alpha_0, alpha_1, alpha_2
+beta_0, beta_1, beta_2
+active coil currents
+```
+
+输出统一为 `equilibrium-psi`。真实样本的标签从 Zarr
+`equilibrium/psi` 读取；仿真样本的标签从严格过滤后的 `equilibrium.npz`
+读取。
+
+这个阶段的目的：
+
+1. 验证 manifest、真实 Zarr、synthetic equilibrium 可以被同一个 Dataset 读取。
+2. 验证真实、仿真、混合三组实验可以使用同一个 TokaMind 训练入口。
+3. 先得到可比较的 smoke baseline，再决定是否补齐 synthetic magnetic diagnostics，
+   升级成严格 Tokamark 官方 `task_1-3`。
+
+训练 split 必须按 `parent_shot`/`shot_id` 分组，不能按 row 随机切分。同一个真实父
+shot 的 real 样本和 synthetic variants 必须在同一个 split，避免数据泄漏。当前
+split helper 会在父 shot 数量很少时至少保留一个验证父组，并优先把样本数较小的父组
+放入 validation，使训练集不会被不均衡父组切得过小。
+
+先 dry-run，不导入 torch、不训练，只验证 manifest 和数据读取：
+
+```bash
+source .tokamind-train-env/bin/activate
+
+python scripts/train_tokamind_manifest.py \
+  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl \
+  --dry-run \
+  --val-fraction 0.2
+```
+
+当前本地数据的 dry-run 参考输出：
+
+```text
+rows: 160
+sources: {"real": 40, "synthetic": 120}
+train_windows: 143
+val_windows: 17
+feature_dim: 22
+input_signal: fusion-state
+output_signal: equilibrium-psi
+```
+
+三组对比训练命令：
+
+```bash
+python scripts/train_tokamind_manifest.py \
+  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_real_only.jsonl \
+  --run-dir ../runs/tokamind-lao85-uniform-iter500-real-only \
+  --epochs 50 \
+  --batch-size 8 \
+  --lr 1e-4
+
+python scripts/train_tokamind_manifest.py \
+  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_only.jsonl \
+  --run-dir ../runs/tokamind-lao85-uniform-iter500-synthetic-only \
+  --epochs 50 \
+  --batch-size 8 \
+  --lr 1e-4
+
+python scripts/train_tokamind_manifest.py \
+  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl \
+  --run-dir ../runs/tokamind-lao85-uniform-iter500-real-plus-synthetic \
+  --epochs 50 \
+  --batch-size 8 \
+  --lr 1e-4
+```
+
+每个 run 会保存：
+
+```text
+../runs/<run-name>/
+├── manifest_scalers.npz
+└── manifest_training_summary.json
+```
+
+训练脚本会调用 `external/tokamind/src/mmt` 中的 `MultiModalTransformer` 和
+`train_finetune`。该模型是 transformer；这里每个样本被包装成一个 MMT window，
+输入信号名为 `fusion-state`，输出信号名为 `equilibrium-psi`。
+
+注意：如果要宣称严格复现 Tokamark 官方 `task_1-3`，还需要为 synthetic 样本生成
+对应的 synthetic magnetic diagnostics，例如 flux loop、poloidal probe、saddle
+voltage 等输入信号。目前这个训练入口是小规模物理参数到 `psi` 的桥接 baseline。
+
+## 9. 验证
 
 项目测试不下载 MAST 数据，也不运行长时间 FreeGSNKE solve：
 
@@ -1075,7 +1300,7 @@ python scripts/plot_mast_geometry.py --shot 11771
 data/processed/geometry/11771.png
 ```
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### 下载的 shot 缺失
 
