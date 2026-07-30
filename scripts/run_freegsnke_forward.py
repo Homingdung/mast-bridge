@@ -263,8 +263,52 @@ def at_time(times: Any, values: Any, target_time: float) -> Any:
     return np.interp(target_time, np.asarray(times), np.asarray(values))
 
 
+def _array_values(values: Any) -> Any:
+    if hasattr(values, "__getitem__") and not isinstance(values, (list, tuple, dict)):
+        try:
+            return values[:]
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return values
+
+
+def equilibrium_grid_bounds(equilibrium_group: Any) -> dict[str, float]:
+    """Return FreeGSNKE grid bounds from the real MAST EFIT grid arrays."""
+    import numpy as np
+
+    major_radius = np.asarray(_array_values(equilibrium_group["major_radius"]), dtype=float)
+    vertical = np.asarray(_array_values(equilibrium_group["z"]), dtype=float)
+    if major_radius.size == 0 or vertical.size == 0:
+        raise ValueError("equilibrium major_radius/z arrays must not be empty")
+    if not np.isfinite(major_radius).any() or not np.isfinite(vertical).any():
+        raise ValueError("equilibrium major_radius/z arrays must contain finite values")
+    return {
+        "Rmin": float(np.nanmin(major_radius)),
+        "Rmax": float(np.nanmax(major_radius)),
+        "Zmin": float(np.nanmin(vertical)),
+        "Zmax": float(np.nanmax(vertical)),
+    }
+
+
+def scale_current_dicts(
+    currents: dict[str, dict[str, float]], scale: float
+) -> dict[str, dict[str, float]]:
+    """Scale active/passive current metadata with the same factor used in FreeGSNKE."""
+    return {
+        family: {
+            name: float(value) * float(scale)
+            for name, value in values.items()
+        }
+        for family, values in currents.items()
+    }
+
+
 def _apply_currents(
-    tokamak: Any, shot: Any, machine_dir: Path, target_time: float
+    tokamak: Any,
+    shot: Any,
+    machine_dir: Path,
+    target_time: float,
+    current_scale: float = 1.0,
 ) -> dict[str, dict[str, float]]:
     import numpy as np
 
@@ -274,7 +318,10 @@ def _apply_currents(
     active_at_time = dict(
         zip(
             active_channels,
-            [at_time(active_group["time"][:], row, target_time) for row in active_current],
+            [
+                float(at_time(active_group["time"][:], row, target_time)) * float(current_scale)
+                for row in active_current
+            ],
         )
     )
 
@@ -308,7 +355,7 @@ def _apply_currents(
         for channel, row in zip(channels, values):
             passive_at_time[channel] = float(
                 at_time(passive_group["time"][:], row, target_time)
-            )
+            ) * float(current_scale)
 
     passive_payload = pickle.load(machine.files["passive_coils"].open("rb"))
     for item in passive_payload:
@@ -383,6 +430,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beta-scale", type=float, default=1.0)
     parser.add_argument("--alpha-offset", type=float, default=0.0)
     parser.add_argument("--beta-offset", type=float, default=0.0)
+    parser.add_argument("--coil-current-scale", type=float, default=1.0)
     return parser
 
 
@@ -426,7 +474,13 @@ def main(argv: list[str] | None = None) -> int:
     solve_machine_dir = _copy_machine_with_positive_widths(machine_dir)
     tokamak = build_machine(MachineGeometry.load(solve_machine_dir))
     shot = zarr.open_group(str(shot_path), mode="r")
-    currents = _apply_currents(tokamak, shot, solve_machine_dir, args.target_time)
+    currents = _apply_currents(
+        tokamak,
+        shot,
+        solve_machine_dir,
+        args.target_time,
+        current_scale=args.coil_current_scale,
+    )
 
     fit = np.load(fit_path)
     fit_index = select_fit_row(fit, str(args.shot), args.target_time)
@@ -452,12 +506,13 @@ def main(argv: list[str] | None = None) -> int:
     alpha = lao85_parameters["alpha"]
     beta = lao85_parameters["beta"]
 
+    grid_bounds = equilibrium_grid_bounds(shot["equilibrium"])
     eq = equilibrium_update.Equilibrium(
         tokamak=tokamak,
-        Rmin=0.1,
-        Rmax=2.0,
-        Zmin=-2.0,
-        Zmax=2.0,
+        Rmin=grid_bounds["Rmin"],
+        Rmax=grid_bounds["Rmax"],
+        Zmin=grid_bounds["Zmin"],
+        Zmax=grid_bounds["Zmax"],
         nx=args.nx,
         ny=args.ny,
     )
@@ -497,7 +552,8 @@ def main(argv: list[str] | None = None) -> int:
         "alpha": alpha,
         "beta": beta,
         "lao85_perturbation": lao85_parameters["perturbation"],
-        "grid": {"nx": args.nx, "ny": args.ny},
+        "coil_current_scale": args.coil_current_scale,
+        "grid": {"nx": args.nx, "ny": args.ny, **grid_bounds},
         "target_relative_tolerance": args.tolerance,
         "max_solving_iterations": args.max_iterations,
         "plot_path": str(image_path),

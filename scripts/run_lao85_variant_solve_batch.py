@@ -99,6 +99,8 @@ def build_forward_command(
         row["alpha_offset"],
         "--beta-offset",
         row["beta_offset"],
+        "--coil-current-scale",
+        row["coil_current_scale"],
         "--output-dir",
         str(output_dir),
     ]

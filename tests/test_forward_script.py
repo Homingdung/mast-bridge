@@ -55,6 +55,13 @@ class ForwardScriptTests(unittest.TestCase):
 
         self.assertEqual(args.tolerance, 1e-8)
 
+    def test_parser_accepts_coil_current_scale(self):
+        args = MODULE.build_parser().parse_args(
+            ["--shot", "11766", "--time", "0.18", "--coil-current-scale", "1.02"]
+        )
+
+        self.assertEqual(args.coil_current_scale, 1.02)
+
     def test_lao85_perturbation_scales_and_offsets_parameters(self):
         alpha = [1.0, -2.0, 3.0]
         beta = [0.5, -0.25, 0.75]
@@ -76,6 +83,30 @@ class ForwardScriptTests(unittest.TestCase):
         self.assertAlmostEqual(result["fvac"], 1.8)
         np.testing.assert_allclose(result["alpha"], [1.7, -1.9, 4.1])
         np.testing.assert_allclose(result["beta"], [0.3, -0.3, 0.5])
+
+    def test_scale_current_dicts_applies_factor_to_active_and_passive_metadata(self):
+        currents = {
+            "active": {"P2": 10.0, "SOL": -2.0},
+            "passive": {"MID1": 0.5},
+        }
+
+        scaled = MODULE.scale_current_dicts(currents, 1.5)
+
+        self.assertEqual(scaled["active"], {"P2": 15.0, "SOL": -3.0})
+        self.assertEqual(scaled["passive"], {"MID1": 0.75})
+
+    def test_equilibrium_grid_bounds_use_real_mast_grid_arrays(self):
+        equilibrium = {
+            "major_radius": np.asarray([0.06, 0.54, 1.02, 1.50, 1.98]),
+            "z": np.asarray([-1.92, -0.96, 0.0, 0.96, 1.92]),
+        }
+
+        bounds = MODULE.equilibrium_grid_bounds(equilibrium)
+
+        self.assertEqual(
+            bounds,
+            {"Rmin": 0.06, "Rmax": 1.98, "Zmin": -1.92, "Zmax": 1.92},
+        )
 
     def test_parse_forward_solver_success_diagnostics(self):
         text = (

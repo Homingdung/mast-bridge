@@ -47,6 +47,7 @@ class RunLao85VariantSolveBatchScriptTests(unittest.TestCase):
             "beta_scale": "0.9998",
             "alpha_offset": "0.0001",
             "beta_offset": "-0.0001",
+            "coil_current_scale": "1.02",
         }
         output_dir = Path("/tmp/synthetic/11771_t0.16_v000").resolve()
 
@@ -69,6 +70,8 @@ class RunLao85VariantSolveBatchScriptTests(unittest.TestCase):
         self.assertIn(str(output_dir), command)
         self.assertIn("--ip-scale", command)
         self.assertIn("1.0001", command)
+        self.assertIn("--coil-current-scale", command)
+        self.assertIn("1.02", command)
 
     def test_runs_solver_rows_and_filters_outputs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
