@@ -94,6 +94,7 @@ def _shot_rows(
     pprime = np.asarray(_array(equilibrium, "dpressure_dpsi"), dtype=float)
     ffprime = np.asarray(_array(equilibrium, "f_df_dpsi"), dtype=float)
     bvac = np.asarray(_array(equilibrium, "bvac_rmag"), dtype=float)
+    magnetic_axis_r = np.asarray(_array(equilibrium, "magnetic_axis_r"), dtype=float)
     ip_times = np.asarray(_array(magnetics, "time"), dtype=float)
     ip_values = np.asarray(_array(magnetics, "ip"), dtype=float)
 
@@ -113,6 +114,8 @@ def _shot_rows(
             continue
         if time_index >= len(bvac) or not np.isfinite(bvac[time_index]):
             continue
+        if time_index >= len(magnetic_axis_r) or not np.isfinite(magnetic_axis_r[time_index]):
+            continue
         alpha, beta = _fit_lao_coefficients(
             psi_norm,
             p_at_time,
@@ -125,7 +128,7 @@ def _shot_rows(
                 "shot": shot,
                 "time": float(time_value),
                 "ip": float(np.interp(time_value, ip_times, ip_values)),
-                "fvac": abs(float(bvac[time_index])),
+                "fvac": abs(float(bvac[time_index]) * float(magnetic_axis_r[time_index])),
                 "freegsnke_alpha": alpha,
                 "freegsnke_beta": beta,
             }

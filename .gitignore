@@ -22,4 +22,5 @@ data/
 .freegsnke-solve-env/
 .mast-download-env/
 .mast-process-env/
+.tokamind-train-env/
 configs/

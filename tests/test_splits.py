@@ -37,6 +37,35 @@ class SplitTests(unittest.TestCase):
                 rows, train_fraction=0.8, val_fraction=0.1, seed=1
             )
 
+    def test_keeps_validation_split_for_two_parent_shots(self):
+        rows = [
+            {"sample_id": "11772", "source": "real", "shot_id": "11772"},
+            {"sample_id": "11773", "source": "real", "shot_id": "11773"},
+        ]
+
+        assignments = assign_parent_shot_splits(
+            rows, train_fraction=0.8, val_fraction=0.2, seed=1
+        )
+
+        self.assertEqual(set(assignments.values()), {"train", "val"})
+
+    def test_validation_prefers_smaller_parent_group(self):
+        rows = [
+            {"sample_id": f"11772_{index}", "source": "real", "shot_id": "11772"}
+            for index in range(8)
+        ]
+        rows.extend(
+            {"sample_id": f"11773_{index}", "source": "real", "shot_id": "11773"}
+            for index in range(2)
+        )
+
+        assignments = assign_parent_shot_splits(
+            rows, train_fraction=0.8, val_fraction=0.2, seed=1
+        )
+
+        self.assertEqual(assignments["11773"], "val")
+        self.assertEqual(assignments["11772"], "train")
+
 
 if __name__ == "__main__":
     unittest.main()

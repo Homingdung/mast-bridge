@@ -41,6 +41,7 @@ class LaoFitFromZarrTests(unittest.TestCase):
         eq.create_array("dpressure_dpsi", data=pprime)
         eq.create_array("f_df_dpsi", data=ffprime)
         eq.create_array("bvac_rmag", data=np.array([np.nan, -0.45, -0.50]))
+        eq.create_array("magnetic_axis_r", data=np.array([np.nan, 0.80, 0.90]))
 
         magnetics = z.create_group("magnetics")
         magnetics.create_array("time", data=np.array([0.0, 0.2, 0.4]))
@@ -57,7 +58,7 @@ class LaoFitFromZarrTests(unittest.TestCase):
         self.assertEqual(table["shot"].tolist(), ["11766", "11766"])
         self.assertEqual(table["time"].tolist(), [0.20, 0.30])
         np.testing.assert_allclose(table["ip"], [200_000.0, 250_000.0])
-        np.testing.assert_allclose(table["fvac"], [0.45, 0.50])
+        np.testing.assert_allclose(table["fvac"], [0.36, 0.45])
         self.assertEqual(table["freegsnke_alpha"].shape, (2, 3))
         self.assertEqual(table["freegsnke_beta"].shape, (2, 3))
 
