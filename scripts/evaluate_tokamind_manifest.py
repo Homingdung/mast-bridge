@@ -24,26 +24,16 @@ if str(SCRIPT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT / "src"))
 
 from mast_bridge.training.tokamind_manifest import (  # noqa: E402
+    INPUT_LAO_PARAMS,
+    INPUT_MODES,
     OUTPUT_SIGNAL_ID,
     TARGET_MODES,
-    TARGET_RAW_PSI,
     ManifestWindowDataset,
     load_manifest_rows,
 )
 from scripts.train_tokamind_manifest import _build_signal_specs  # noqa: E402
 
 
-DEFAULT_MANIFEST = (
-    WORKSPACE_ROOT
-    / "data"
-    / "manifests"
-    / "tokamark_lao85_uniform_small_iter500_real_only.jsonl"
-)
-DEFAULT_RUNS = [
-    WORKSPACE_ROOT / "runs" / "tokamark_lao85_uniform_small_iter500-real-only",
-    WORKSPACE_ROOT / "runs" / "tokamark_lao85_uniform_small_iter500-synthetic-only",
-    WORKSPACE_ROOT / "runs" / "tokamark_lao85_uniform_small_iter500-real-plus-synthetic",
-]
 DEFAULT_VAL_SHOTS = ["11768", "11775", "11780"]
 
 
@@ -51,8 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Evaluate one or more TokaMind manifest runs on fixed real EFIT validation shots."
     )
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    parser.add_argument("--run-dir", type=Path, action="append", default=None)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--run-dir", type=Path, action="append", required=True)
     parser.add_argument("--val-shot", action="append", default=None)
     parser.add_argument(
         "--output-json",
@@ -65,17 +55,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=WORKSPACE_ROOT / "artifacts" / "tokamind_eval" / "real_val_metrics.csv",
     )
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--d-model", type=int, default=64)
-    parser.add_argument("--n-layers", type=int, default=2)
-    parser.add_argument("--n-heads", type=int, default=4)
-    parser.add_argument("--dim-ff", type=int, default=128)
-    parser.add_argument("--dropout", type=float, default=0.05)
-    parser.add_argument(
-        "--target-mode",
-        choices=sorted(TARGET_MODES),
-        default=None,
-        help="Evaluation target mode; default reads manifest_scalers.npz, falling back to raw-psi.",
-    )
     return parser
 
 
@@ -131,18 +110,93 @@ def _load_scalers(run_dir: Path) -> dict[str, np.ndarray | list[str]]:
         }
         if "target_mode" in data:
             scalers["target_mode"] = str(np.asarray(data["target_mode"]).item())
+        if "input_mode" in data:
+            scalers["input_mode"] = str(np.asarray(data["input_mode"]).item())
         return scalers
 
 
-def resolve_target_mode(cli_target_mode: str | None, scalers: dict[str, Any]) -> str:
-    """Choose target mode from CLI, scaler metadata, or the legacy raw default."""
-    target_mode = cli_target_mode or str(scalers.get("target_mode") or TARGET_RAW_PSI)
-    if target_mode not in TARGET_MODES:
-        raise ValueError(f"Unknown target_mode {target_mode!r}; expected one of {sorted(TARGET_MODES)}")
-    return target_mode
+def resolve_input_mode(scalers: dict[str, Any]) -> str:
+    """Choose the recorded input mode, with a fallback for legacy runs."""
+    input_mode = str(scalers.get("input_mode") or INPUT_LAO_PARAMS)
+    if input_mode not in INPUT_MODES:
+        raise ValueError(f"Unknown input_mode {input_mode!r}; expected one of {sorted(INPUT_MODES)}")
+    return input_mode
 
 
-def _build_dataset(rows: list[dict[str, Any]], scalers: dict[str, Any], target_mode: str) -> ManifestWindowDataset:
+def resolve_target_mode(
+    scalers: dict[str, Any],
+    summary: dict[str, Any],
+) -> str:
+    """Require evaluation labels to use the exact target mode used for training."""
+    scaler_mode = scalers.get("target_mode")
+    summary_mode = summary.get("target_mode")
+    if scaler_mode not in TARGET_MODES or summary_mode not in TARGET_MODES:
+        raise ValueError("Training scaler/summary is missing a valid target_mode")
+    if scaler_mode != summary_mode:
+        raise ValueError(
+            f"target_mode mismatch between scaler ({scaler_mode}) and summary ({summary_mode})"
+        )
+    return str(scaler_mode)
+
+
+def load_run_summary(run_dir: Path) -> dict[str, Any]:
+    summary_path = run_dir / "manifest_training_summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(f"Missing training summary: {summary_path}")
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid training summary: {summary_path}")
+    return payload
+
+
+def resolve_model_config(summary: dict[str, Any]) -> dict[str, float | int]:
+    config = summary.get("model_config")
+    required = {"d_model", "n_layers", "n_heads", "dim_ff", "dropout"}
+    if not isinstance(config, dict) or set(config) != required:
+        raise ValueError(
+            "Training summary is missing the exact model_config required to load its checkpoint"
+        )
+    return {
+        "d_model": int(config["d_model"]),
+        "n_layers": int(config["n_layers"]),
+        "n_heads": int(config["n_heads"]),
+        "dim_ff": int(config["dim_ff"]),
+        "dropout": float(config["dropout"]),
+    }
+
+
+def validate_evaluation_split(
+    summary: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> None:
+    train_shots = summary.get("train_shots")
+    val_shots = summary.get("val_shots")
+    if not isinstance(train_shots, list) or not isinstance(val_shots, list):
+        raise ValueError("Training summary is missing train_shots/val_shots split metadata")
+    evaluated = {str(row["shot_id"]) for row in rows}
+    overlap = evaluated & {str(shot) for shot in train_shots}
+    if overlap:
+        raise ValueError(
+            f"Evaluation shots occur in the training split: {sorted(overlap)}"
+        )
+    unknown = evaluated - {str(shot) for shot in val_shots}
+    if unknown:
+        raise ValueError(
+            f"Evaluation shots were not recorded in the validation split: {sorted(unknown)}"
+        )
+
+
+def require_loaded_checkpoint(epoch_best: int, run_dir: Path) -> None:
+    if int(epoch_best) < 0:
+        raise FileNotFoundError(f"No usable best/latest checkpoint found in {run_dir}")
+
+
+def _build_dataset(
+    rows: list[dict[str, Any]],
+    scalers: dict[str, Any],
+    target_mode: str,
+    input_mode: str,
+) -> ManifestWindowDataset:
     return ManifestWindowDataset.from_rows(
         rows,
         feature_names=scalers["feature_names"],
@@ -151,6 +205,7 @@ def _build_dataset(rows: list[dict[str, Any]], scalers: dict[str, Any], target_m
         output_mean=scalers["output_mean"],
         output_std=scalers["output_std"],
         target_mode=target_mode,
+        input_mode=input_mode,
     )
 
 
@@ -170,32 +225,47 @@ def evaluate_run(
     from mmt.train.loop_utils import move_batch_to_device
 
     resolved_run = run_dir.expanduser().resolve()
+    summary = load_run_summary(resolved_run)
+    validate_evaluation_split(summary, rows)
+    model_config = resolve_model_config(summary)
     scalers = _load_scalers(resolved_run)
-    target_mode = resolve_target_mode(args.target_mode, scalers)
-    dataset = _build_dataset(rows, scalers, target_mode)
+    input_mode = resolve_input_mode(scalers)
+    target_mode = resolve_target_mode(scalers, summary)
+    dataset = _build_dataset(rows, scalers, target_mode, input_mode)
     signal_specs = _build_signal_specs(
         feature_dim=len(dataset.feature_names),
         output_dim=65 * 65,
     )
     model = MultiModalTransformer(
         signal_specs=signal_specs,
-        d_model=int(args.d_model),
-        n_layers=int(args.n_layers),
-        n_heads=int(args.n_heads),
-        dim_ff=int(args.dim_ff),
-        dropout=float(args.dropout),
+        d_model=int(model_config["d_model"]),
+        n_layers=int(model_config["n_layers"]),
+        n_heads=int(model_config["n_heads"]),
+        dim_ff=int(model_config["dim_ff"]),
+        dropout=float(model_config["dropout"]),
         max_positions=1,
         modality_heads_cfg={
-            "timeseries": {"hidden": int(args.d_model), "out_dim": int(args.d_model)},
-            "video": {"hidden": int(args.d_model), "out_dim": int(args.d_model)},
+            "timeseries": {
+                "hidden": int(model_config["d_model"]),
+                "out_dim": int(model_config["d_model"]),
+            },
+            "video": {
+                "hidden": int(model_config["d_model"]),
+                "out_dim": int(model_config["d_model"]),
+            },
         },
         output_adapters_cfg={
-            "hidden_dim": {"default": int(args.d_model), "bucketed": {"enable": False}, "manual": {}}
+            "hidden_dim": {
+                "default": int(model_config["d_model"]),
+                "bucketed": {"enable": False},
+                "manual": {},
+            }
         },
         backbone_activation="gelu",
         debug_tokens=False,
     )
     epoch_best, best_val, checkpoint_meta = load_best_weights(str(resolved_run), model, map_location="cpu")
+    require_loaded_checkpoint(epoch_best, resolved_run)
 
     collate = MMTCollate(
         {
@@ -239,6 +309,8 @@ def evaluate_run(
         "checkpoint_epoch": int(epoch_best),
         "checkpoint_best_val": float(best_val),
         "checkpoint_meta": checkpoint_meta,
+        "model_config": model_config,
+        "input_mode": input_mode,
         "target_mode": target_mode,
         "validation_shots": sorted({str(row["shot_id"]) for row in rows}),
         **metrics,
@@ -256,6 +328,7 @@ def _write_outputs(results: list[dict[str, Any]], output_json: Path, output_csv:
         "validation_shots",
         "checkpoint_epoch",
         "checkpoint_best_val",
+        "input_mode",
         "target_mode",
         "standardized_mse",
         "raw_mse",
@@ -280,8 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     if not rows:
         raise ValueError(f"No real validation rows found in {manifest} for shots {val_shots}")
 
-    run_dirs = args.run_dir or DEFAULT_RUNS
-    results = [evaluate_run(run_dir=run_dir, rows=rows, args=args) for run_dir in run_dirs]
+    results = [evaluate_run(run_dir=run_dir, rows=rows, args=args) for run_dir in args.run_dir]
     _write_outputs(
         results,
         args.output_json.expanduser().resolve(),

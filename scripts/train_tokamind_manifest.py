@@ -21,30 +21,46 @@ if TOKAMIND_SRC.is_dir() and str(TOKAMIND_SRC) not in sys.path:
 from mast_bridge.training.tokamind_manifest import (  # noqa: E402
     INPUT_SIGNAL_ID,
     OUTPUT_SIGNAL_ID,
+    INPUT_LAO_PARAMS,
+    INPUT_MODES,
     TARGET_MODES,
     TARGET_RAW_PSI,
     ManifestWindowDataset,
     build_manifest_datasets,
+    feature_names_for_rows,
+    load_feature_schema,
     load_manifest_rows,
 )
-
-
-DEFAULT_MANIFEST = (
-    WORKSPACE_ROOT
-    / "data"
-    / "manifests"
-    / "tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl"
-)
-DEFAULT_RUN_DIR = WORKSPACE_ROOT / "runs" / "tokamind-lao85-uniform-iter500-real-plus-synthetic"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train a small TokaMind MMT model on a mast-bridge JSONL manifest."
     )
-    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--feature-schema",
+        type=Path,
+        default=None,
+        help="Versioned JSON file containing the exact ordered feature names.",
+    )
+    parser.add_argument(
+        "--feature-reference-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Optional manifest used only to select a common feature schema; "
+            "normalization still uses the training manifest."
+        ),
+    )
+    parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--val-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--val-shot",
+        action="append",
+        default=None,
+        help="Explicit validation shot; repeat to force one common split across runs.",
+    )
     parser.add_argument("--seed", type=int, default=54)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=4)
@@ -54,12 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-heads", type=int, default=4)
     parser.add_argument("--dim-ff", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.05)
+    parser.add_argument("--input-mode", choices=sorted(INPUT_MODES), required=True)
     parser.add_argument("--target-mode", choices=sorted(TARGET_MODES), default=TARGET_RAW_PSI)
     parser.add_argument("--dry-run", action="store_true", help="Validate manifest loading without importing torch.")
     return parser
 
 
-def _write_scalers(run_dir: Path, train_dataset: ManifestWindowDataset, target_mode: str) -> None:
+def _write_scalers(run_dir: Path, train_dataset: ManifestWindowDataset, input_mode: str, target_mode: str) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         run_dir / "manifest_scalers.npz",
@@ -68,6 +85,7 @@ def _write_scalers(run_dir: Path, train_dataset: ManifestWindowDataset, target_m
         input_std=train_dataset.input_std,
         output_mean=train_dataset.output_mean,
         output_std=train_dataset.output_std,
+        input_mode=np.asarray(input_mode),
         target_mode=np.asarray(target_mode),
     )
 
@@ -76,6 +94,7 @@ def _summary(
     rows: list[dict[str, Any]],
     train_dataset: ManifestWindowDataset,
     val_dataset: ManifestWindowDataset,
+    input_mode: str,
     target_mode: str,
 ) -> str:
     sources: dict[str, int] = {}
@@ -89,10 +108,24 @@ def _summary(
             f"train_windows: {len(train_dataset)}",
             f"val_windows: {len(val_dataset)}",
             f"feature_dim: {len(train_dataset.feature_names)}",
+            f"input_mode: {input_mode}",
             f"target_mode: {target_mode}",
             "input_signal: fusion-state",
             "output_signal: equilibrium-psi",
         ]
+    )
+
+
+def _shot_ids(dataset: ManifestWindowDataset) -> list[str]:
+    return sorted(
+        {
+            str(
+                row.get("parent_shot")
+                if row.get("source") == "synthetic"
+                else row.get("shot_id")
+            )
+            for row in dataset.rows
+        }
     )
 
 
@@ -235,29 +268,75 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     manifest = args.manifest.expanduser().resolve()
     rows = load_manifest_rows(manifest)
+    feature_reference_manifest = (
+        args.feature_reference_manifest.expanduser().resolve()
+        if args.feature_reference_manifest is not None
+        else None
+    )
+    feature_schema = (
+        args.feature_schema.expanduser().resolve()
+        if args.feature_schema is not None
+        else None
+    )
+    feature_names = (
+        load_feature_schema(feature_schema)
+        if feature_schema is not None
+        else None
+    )
+    if feature_reference_manifest is not None:
+        reference_names = feature_names_for_rows(
+            load_manifest_rows(feature_reference_manifest),
+            input_mode=str(args.input_mode),
+        )
+        if feature_names is not None and reference_names != feature_names:
+            raise ValueError(
+                "Feature reference manifest does not match the versioned feature schema"
+            )
+        feature_names = reference_names
     train_dataset, val_dataset = build_manifest_datasets(
         rows,
         val_fraction=float(args.val_fraction),
         seed=int(args.seed),
+        val_shots=args.val_shot,
+        input_mode=str(args.input_mode),
         target_mode=str(args.target_mode),
+        feature_names=feature_names,
     )
 
-    print(_summary(rows, train_dataset, val_dataset, str(args.target_mode)))
+    print(_summary(rows, train_dataset, val_dataset, str(args.input_mode), str(args.target_mode)))
 
     if args.dry_run:
         return 0
 
     run_dir = args.run_dir.expanduser().resolve()
-    _write_scalers(run_dir, train_dataset, str(args.target_mode))
+    _write_scalers(run_dir, train_dataset, str(args.input_mode), str(args.target_mode))
     history = _train(args, train_dataset, val_dataset)
     (run_dir / "manifest_training_summary.json").write_text(
         json.dumps(
             {
                 "manifest": str(manifest),
+                "feature_reference_manifest": (
+                    str(feature_reference_manifest)
+                    if feature_reference_manifest is not None
+                    else None
+                ),
+                "feature_schema": (
+                    str(feature_schema) if feature_schema is not None else None
+                ),
                 "rows": len(rows),
                 "train_windows": len(train_dataset),
                 "val_windows": len(val_dataset),
+                "train_shots": _shot_ids(train_dataset),
+                "val_shots": _shot_ids(val_dataset),
+                "input_mode": str(args.input_mode),
                 "target_mode": str(args.target_mode),
+                "model_config": {
+                    "d_model": int(args.d_model),
+                    "n_layers": int(args.n_layers),
+                    "n_heads": int(args.n_heads),
+                    "dim_ff": int(args.dim_ff),
+                    "dropout": float(args.dropout),
+                },
                 "feature_names": train_dataset.feature_names,
                 "history": history,
             },

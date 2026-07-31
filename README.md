@@ -10,7 +10,9 @@ download MAST Level 2
   -> build machine pickles
   -> build Lao/EFIT NPZ
   -> run FreeGSNKE forward solves
+  -> synthesize magnetic diagnostics for accepted equilibria
   -> build real/synthetic/mixed manifests
+  -> train diagnostics-to-psi TokaMind models
 ```
 
 数据输入和产出统一放在 workspace 的 `data/` 目录下。`data_analysis_report/` 只用于图片和分析报告，不作为当前数据流水线的输入目录。
@@ -568,14 +570,14 @@ Gaussian、Latin Hypercube 或基于基准收敛性的预筛选采样，只需�
 
 ```bash
 FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-VARIANT_CSV=../data/manifests/lao85_uniform_variants.csv
+VARIANT_CSV=../data/manifests/lao85_uniform_small_variants.csv
 
 python scripts/build_lao85_variant_rows.py \
   --fit-path "$FIT_PATH" \
-  --variants-per-point 5 \
+  --variants-per-point 2 \
   --seed 20260729 \
-  --min-time 0.10 \
-  --max-time 0.30 \
+  --min-time 0.12 \
+  --max-time 0.24 \
   --output "$VARIANT_CSV"
 ```
 
@@ -597,8 +599,8 @@ ip_scale,fvac_scale,alpha_scale,beta_scale,alpha_offset,beta_offset,coil_current
 ```bash
 source .freegsnke-solve-env/bin/activate
 
-VARIANT_CSV=../data/manifests/lao85_uniform_variants.csv
-SYNTH_DIR=../data/processed/synthetic_lao85_uniform_iter500
+VARIANT_CSV=../data/manifests/lao85_uniform_small_variants.csv
+SYNTH_DIR=../data/processed/synthetic_lao85_uniform_small_iter500
 MANIFEST_DIR=../data/manifests
 
 python scripts/run_lao85_variant_solve_batch.py \
@@ -607,7 +609,7 @@ python scripts/run_lao85_variant_solve_batch.py \
   --fit-path ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz \
   --synthetic-root "$SYNTH_DIR" \
   --manifest-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_iter500 \
+  --prefix tokamark_lao85_uniform_small_iter500 \
   --task task_1-3 \
   --nx 65 \
   --ny 65 \
@@ -622,9 +624,8 @@ CSV 中剩余样本。脚本默认跳过已经存在 `equilibrium.npz` 和 `meta
 如果需要覆盖重跑，显式加 `--rerun-existing`。
 
 注意：正式筛选建议使用 `--max-iterations 500`，不要继续沿用早期 smoke run 的
-`100`。本地测试显示，`11772_t0.1` 的 5 个 uniform variants 在
-`max_iterations=500` 下全部达到 `1e-8` strict convergence，其中一个样本用了
-`239` 次迭代；如果只允许 100 次，会提前截断这类本来可以收敛的样本。
+`100`。部分 accepted 样本需要超过 100 次迭代才达到 `1e-8`；如果只允许 100 次，
+会提前截断这类本来可以收敛的样本。
 
 运行时终端会逐个样本打印进度，例如：
 
@@ -637,16 +638,16 @@ CSV 中剩余样本。脚本默认跳过已经存在 `equilibrium.npz` 和 `meta
 会在每个样本结束后实时更新 batch report，可以另开一个终端查看：
 
 ```bash
-tail -f ../data/manifests/tokamark_lao85_uniform_iter500_batch_report.jsonl
+tail -f ../data/manifests/tokamark_lao85_uniform_small_iter500_batch_report.jsonl
 ```
 
 该脚本会写出：
 
 ```text
-data/processed/synthetic_lao85_uniform_iter500/<shot>_t<time>_<variant_id>/
-data/manifests/tokamark_lao85_uniform_iter500_batch_report.jsonl
-data/manifests/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl
-data/manifests/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
+data/processed/synthetic_lao85_uniform_small_iter500/<shot>_t<time>_<variant_id>/
+data/manifests/tokamark_lao85_uniform_small_iter500_batch_report.jsonl
+data/manifests/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl
+data/manifests/tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl
 ```
 
 `batch_report.jsonl` 记录每个采样 row 的执行状态；accepted/rejected manifest 由
@@ -691,11 +692,13 @@ synthetic sample:
    `solver_not_converged`。
 5. 若缺少或无法解析 `solver_final_tolerance`，样本进入 rejected，原因是
    `solver_tolerance_missing`。
-6. 若 `solver_final_tolerance > --max-solver-tolerance`，样本进入 rejected，原因是
+6. 若 `solver_final_tolerance` 是 NaN/Inf，样本进入 rejected，原因是
+   `solver_tolerance_nonfinite`。
+7. 若 `solver_final_tolerance > --max-solver-tolerance`，样本进入 rejected，原因是
    `solver_tolerance_above_threshold`。当前默认阈值是 `1e-8`。
-7. 若 `equilibrium.npz` 中 `psi` 不存在、无法读取或包含非 finite 值，样本进入
-   rejected，原因是 `invalid_equilibrium`。
-8. 只有所有检查都通过的样本才写入 accepted manifest，作为训练候选样本。
+8. 若 `equilibrium.npz` 中 `psi` 不存在、不是 `65x65`、无法读取或包含 non-finite
+   值，样本进入 rejected，原因是 `invalid_equilibrium`。
+9. 只有所有检查都通过的样本才写入 accepted manifest，作为训练候选样本。
 
 未通过的样本不会被物理删除；它们会进入 rejected report，用于后续分析
 shot/time/扰动参数为什么不收敛。也就是说，目录里的仿真结果是原始求解输出，
@@ -709,14 +712,14 @@ FreeGSNKE，只会重新扫描已有 `metadata.json` 和 `equilibrium.npz`。
 ```bash
 source .freegsnke-solve-env/bin/activate
 
-SYNTH_DIR=../data/processed/synthetic_lao85_uniform_iter500
+SYNTH_DIR=../data/processed/synthetic_lao85_uniform_small_iter500
 MANIFEST_DIR=../data/manifests
 mkdir -p "$MANIFEST_DIR"
 
 python scripts/build_synthetic_manifest.py \
   --synthetic-root "$SYNTH_DIR" \
-  --output "$MANIFEST_DIR/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl" \
-  --rejected-output "$MANIFEST_DIR/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl" \
+  --output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
+  --rejected-output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl" \
   --task task_1-3 \
   --max-solver-tolerance 1e-8
 ```
@@ -725,76 +728,101 @@ python scripts/build_synthetic_manifest.py \
 
 ```text
 data/manifests/
-├── tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl
-└── tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
+├── tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl
+└── tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl
 ```
 
 `accepted` 才能进入后续数据集候选；`rejected` 只作为 QC 报告，不进入对比实验数据集。
 当前 rejected report 会记录稳定的 rejection reason，例如
 `solver_not_converged`、`solver_tolerance_missing`、
-`solver_tolerance_above_threshold` 或 `invalid_equilibrium`。
+`solver_tolerance_nonfinite`、`solver_tolerance_above_threshold` 或
+`invalid_equilibrium`。
 
-### 4.7 构建三组对比实验 Manifest
+### 4.7 生成合成磁诊断并构建三组对比实验 Manifest
 
-为了做三组对比实验，使用严格过滤后的 synthetic manifest 反推出对应的真实 `shot/time`，生成：
-
-1. 只有真实数据：`*_real_only.jsonl`
-2. 只有仿真数据：`*_synthetic_only.jsonl`
-3. 真实数据 + 仿真数据：`*_real_plus_synthetic.jsonl`
+TokaMind 的输入应是诊断量而不是 Lao85 参数。严格过滤完成后，先为 accepted
+synthetic equilibrium 生成 `<synthetic-sample>/diagnostics.npz`。该过程不会重新
+运行 Grad-Shafranov 迭代求解，而是从已保存的总 `psi`、求解时的 coil currents 和
+Lao85 参数重建最终 equilibrium 状态，再调用 FreeGSNKE 官方 probe calculator。
 
 ```bash
 source .freegsnke-solve-env/bin/activate
 
 MANIFEST_DIR=../data/manifests
+
+python scripts/build_synthetic_magnetic_diagnostics.py \
+  --accepted-manifest "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
+  --data-dir ../data/raw/mast \
+  --report "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_diagnostics_report.jsonl"
+```
+
+脚本默认跳过已经存在且通过校验的 `diagnostics.npz`，可以直接断点续跑。若要覆盖重算，
+增加 `--overwrite`。report 中 generated 样本的
+`psi_reconstruction_max_abs_error` 应接近机器精度，当前数据为 `0.0`。
+
+`diagnostics.npz` 的固定字段为：
+
+```text
+schema_version
+target_time
+magnetics_ip
+flux_loop_names, flux_loop_values
+pickup_names, pickup_families, pickup_values
+active_coil_names, active_coil_values
+flux_loop_scale
+```
+
+flux-loop 使用 `2*pi` 从 FreeGSNKE 的 `Wb/(2*pi)` 转为 MAST Level 2 的 `Wb`；
+pickup 使用修正后的 CCBV/OBR/OBV 方向。文件校验会拒绝缺字段、数组长度不一致、重复
+通道以及 NaN/Inf。
+
+随后用通过 solver 和 diagnostics 两层过滤的 synthetic 样本反推出对应真实
+`shot/time`，构建真实、仿真和混合三组 manifest：
+
+```bash
 DATA_DIR=../data/raw/mast
 FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 
 python scripts/build_experiment_manifests.py \
-  --accepted-synthetic "$MANIFEST_DIR/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl" \
+  --accepted-synthetic "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
   --raw-data-dir "$DATA_DIR" \
   --fit-path "$FIT_PATH" \
   --output-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_iter500 \
-  --task task_1-3
+  --prefix tokamark_lao85_uniform_small_iter500_diagnostics \
+  --task task_1-3 \
+  --require-synthetic-diagnostics
 ```
 
 输出：
 
 ```text
 data/manifests/
-├── tokamark_lao85_uniform_iter500_real_only.jsonl
-├── tokamark_lao85_uniform_iter500_synthetic_only.jsonl
-└── tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl
+├── tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl
+├── tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl
+└── tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
 ```
 
-这三个 manifest 使用同一批父 `shot/time` 的物理点，便于后续只比较训练数据来源差异。
-当前 `uniform + max_iterations=500 + 1e-8 strict filter` 数据集示例为：
+当前数据统计：
 
 ```text
-tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl      120 samples
-tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl       95 samples
-tokamark_lao85_uniform_iter500_real_only.jsonl                40 samples
-tokamark_lao85_uniform_iter500_synthetic_only.jsonl          120 samples
-tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl     160 samples
+synthetic accepted with valid diagnostics     219
+diagnostics real-only                         171
+diagnostics synthetic-only                    219
+diagnostics real-plus-synthetic               390
 ```
 
-其中 `synthetic_only` manifest 就是过滤后的仿真数据集入口；它只包含
-`tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl` 中通过 `1e-8` strict filter
-的 FreeGSNKE 样本。`real_only` 的 40 个真实点来自 accepted synthetic manifest
-反推出来的唯一 `(parent_shot, target_time)` 集合；`real_plus_synthetic` 是两者
-并集。这样三组实验共享同一批父物理点，避免“真实组”和“仿真组”因为 shot/time
-覆盖不同而混入额外变量。
+`--require-synthetic-diagnostics` 要求 synthetic 样本同时通过 `1e-8` solver filter 和
+`diagnostics.npz` 内容校验。`real_only` 的 171 个真实点来自这些 synthetic 样本
+反推的唯一 `(parent_shot, target_time)`；`real_plus_synthetic` 是两者并集。
 
-real manifest row 的 `label_source` 是 `zarr_equilibrium_psi`，表示真实标签从
-真实 Zarr 的 EFIT `equilibrium/psi` 读取；`fit_path` 只表示 Lao85 profile 参数
-来源，不是 real label。synthetic manifest row 的 `equilibrium_path` 才是
-FreeGSNKE 求解后的 `equilibrium.npz`。
+real manifest 的 `label_source` 是 `zarr_equilibrium_psi`，真实标签直接读取 EFIT
+`equilibrium/psi`，不运行 FreeGSNKE。synthetic manifest 的标签来自
+`equilibrium_path`，输入来自 `diagnostics_path`。
 
 ## 5. 当前 uniform_iter500 复现流程
 
-这一节是当前已经跑通的数据生成流程，对应 `docs/reproduce_uniform_iter500.md`。
-它复现的是 `uniform_random + max_iterations=500 + strict 1e-8 filter` 的小规模
-仿真数据集，不包含训练。
+这一节给出当前实际使用的
+`uniform_random + 2 variants + max_iterations=500 + strict 1e-8 filter` 小规模流程。
 
 从项目目录运行：
 
@@ -824,25 +852,26 @@ MAST_wall.pickle
 旧文件名 `MAST_passive_coilds.pickle` 是历史 typo，只作为兼容读取 fallback；
 新生成的数据应使用 `MAST_passive_coils.pickle`。
 
-生成 Lao85 uniform 随机扰动表：
+生成 Lao85 uniform 随机扰动表。当前时间窗是 `0.12-0.24 s`，每个拟合
+`shot/time` 生成 2 个 variants：
 
 ```bash
 FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-VARIANT_CSV=../data/manifests/lao85_uniform_variants.csv
+VARIANT_CSV=../data/manifests/lao85_uniform_small_variants.csv
 
 python scripts/build_lao85_variant_rows.py \
   --fit-path "$FIT_PATH" \
-  --variants-per-point 5 \
+  --variants-per-point 2 \
   --seed 20260729 \
-  --min-time 0.10 \
-  --max-time 0.30 \
+  --min-time 0.12 \
+  --max-time 0.24 \
   --output "$VARIANT_CSV"
 ```
 
 批量运行 FreeGSNKE 正问题求解：
 
 ```bash
-SYNTH_DIR=../data/processed/synthetic_lao85_uniform_iter500
+SYNTH_DIR=../data/processed/synthetic_lao85_uniform_small_iter500
 MANIFEST_DIR=../data/manifests
 
 python scripts/run_lao85_variant_solve_batch.py \
@@ -851,7 +880,7 @@ python scripts/run_lao85_variant_solve_batch.py \
   --fit-path "$FIT_PATH" \
   --synthetic-root "$SYNTH_DIR" \
   --manifest-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_iter500 \
+  --prefix tokamark_lao85_uniform_small_iter500 \
   --task task_1-3 \
   --nx 65 \
   --ny 65 \
@@ -867,16 +896,16 @@ python scripts/run_lao85_variant_solve_batch.py \
 查看批处理进度：
 
 ```bash
-tail -f ../data/manifests/tokamark_lao85_uniform_iter500_batch_report.jsonl
+tail -f ../data/manifests/tokamark_lao85_uniform_small_iter500_batch_report.jsonl
 ```
 
 重新扫描已有求解结果并生成严格过滤 manifest：
 
 ```bash
 python scripts/build_synthetic_manifest.py \
-  --synthetic-root ../data/processed/synthetic_lao85_uniform_iter500 \
-  --output ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl \
-  --rejected-output ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl \
+  --synthetic-root "$SYNTH_DIR" \
+  --output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
+  --rejected-output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl" \
   --task task_1-3 \
   --max-solver-tolerance 1e-8
 ```
@@ -884,34 +913,48 @@ python scripts/build_synthetic_manifest.py \
 只有 `*_synthetic_accepted.jsonl` 进入后续数据集构建。筛选条件是
 `metadata.json` 中 `solver_converged=true`，且 `solver_final_tolerance <= 1e-8`。
 
-构建三组对比实验 manifest：
+为 accepted 样本补算 diagnostics，不重新运行 GS solver：
+
+```bash
+python scripts/build_synthetic_magnetic_diagnostics.py \
+  --accepted-manifest "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
+  --data-dir ../data/raw/mast \
+  --report "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_diagnostics_report.jsonl"
+```
+
+构建 diagnostics 输入的三组对比实验 manifest：
 
 ```bash
 python scripts/build_experiment_manifests.py \
-  --accepted-synthetic ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl \
+  --accepted-synthetic "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
   --raw-data-dir ../data/raw/mast \
   --fit-path "$FIT_PATH" \
-  --output-dir ../data/manifests \
-  --prefix tokamark_lao85_uniform_iter500 \
-  --task task_1-3
+  --output-dir "$MANIFEST_DIR" \
+  --prefix tokamark_lao85_uniform_small_iter500_diagnostics \
+  --task task_1-3 \
+  --require-synthetic-diagnostics
 ```
 
 输出：
 
 ```text
-../data/manifests/tokamark_lao85_uniform_iter500_real_only.jsonl
-../data/manifests/tokamark_lao85_uniform_iter500_synthetic_only.jsonl
-../data/manifests/tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl
+../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl
+../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl
+../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
 ```
 
-当前本地过滤后的计数示例：
+当前本地计数：
 
 ```text
-synthetic_accepted:     120
-synthetic_rejected:      95
-real_only:               40
-synthetic_only:         120
-real_plus_synthetic:    160
+variant rows / batch attempts:          624
+FreeGSNKE process solved:               616
+FreeGSNKE process failed:                 8
+strict synthetic accepted:             219
+strict synthetic rejected:             397
+accepted with valid diagnostics:       219
+diagnostics real-only:                  171
+diagnostics synthetic-only:             219
+diagnostics real-plus-synthetic:        390
 ```
 
 ## 6. 单个 Shot 命令
@@ -1130,136 +1173,156 @@ pickup 是按 Level 2 方向约定得到的 `B.n`。
 
 ```text
 data/manifests/
-├── tokamark_lao85_uniform_iter500_synthetic_accepted.jsonl
-├── tokamark_lao85_uniform_iter500_synthetic_rejected.jsonl
-├── tokamark_lao85_uniform_iter500_real_only.jsonl
-├── tokamark_lao85_uniform_iter500_synthetic_only.jsonl
-└── tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl
+├── tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl
+├── tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl
+├── tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl
+├── tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl
+└── tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
 ```
 
 `*_synthetic_accepted.jsonl` 由 `scripts/build_synthetic_manifest.py` 生成；不要手写，
 也不要把 rejected 样本并入 train/val/test。`*_real_only.jsonl`、
 `*_synthetic_only.jsonl` 和 `*_real_plus_synthetic.jsonl` 由
-`scripts/build_experiment_manifests.py` 生成。
+`scripts/build_experiment_manifests.py --require-synthetic-diagnostics` 生成。
 
 每行至少包含：
 
 ```json
 {
-  "sample_id": "11771_t0.16",
+  "sample_id": "11766_t0.155_v000",
   "source": "synthetic",
-  "parent_shot": "11771",
-  "time": 0.16,
-  "data_path": "data/processed/synthetic/11771_t0.16/equilibrium.npz",
-  "metadata_path": "data/processed/synthetic/11771_t0.16/metadata.json",
-  "split": "train",
+  "shot_id": "11766_t0.155_v000",
+  "parent_shot": "11766",
+  "target_time": 0.155,
+  "data_path": "/path/to/synthetic/11766_t0.155_v000",
+  "equilibrium_path": "/path/to/synthetic/11766_t0.155_v000/equilibrium.npz",
+  "diagnostics_path": "/path/to/synthetic/11766_t0.155_v000/diagnostics.npz",
   "task": "task_1-3"
 }
 ```
 
 ## 8. TokaMind 小规模训练
 
-当前训练入口是 manifest 版小任务，用于先跑通真实/仿真/混合三组数据到 TokaMind
-transformer 的链路：
+当前主训练入口是 `scripts/train_tokamind_diagnostics.py`：
 
 ```text
-manifest row
-  -> low-dimensional fusion-state features
+magnetics Ip + flux loops + poloidal pickup probes + active coil currents
   -> TokaMind MultiModalTransformer
   -> 65 x 65 equilibrium/psi
 ```
 
-输入特征不是 Tokamark 官方 `task_1-3` 的完整磁诊断时序，而是现阶段已经稳定生成的
-物理状态量：
+不要直接把 diagnostics manifest 交给底层 `train_tokamind_manifest.py`；
+该通用入口现在要求显式指定 manifest、run directory 和 input mode，防止误用旧
+Lao 参数任务。
 
-```text
-target_time
-Ip
-fvac
-alpha_0, alpha_1, alpha_2
-beta_0, beta_1, beta_2
-active coil currents
-```
+真实输入从 MAST Zarr 的 `magnetics` 和 `pf_active` 读取；仿真输入从严格过滤样本的
+`diagnostics.npz` 读取。真实标签使用 EFIT `equilibrium/psi`，不运行 FreeGSNKE；
+仿真标签使用 accepted 样本的 FreeGSNKE `equilibrium.npz/psi`。Lao85 参数不再作为
+这个训练任务的输入。
 
-输出统一为 `equilibrium-psi`。真实样本的标签从 Zarr
-`equilibrium/psi` 读取；仿真样本的标签从严格过滤后的 `equilibrium.npz`
-读取。
+训练和验证按 `parent_shot`/`shot_id` 分组，同一炮的真实时间片和 synthetic variants
+不会跨 split。`train_tokamind_diagnostics.py` 默认把 11768、11775、11780 固定为
+三组实验共同的 validation shots，并把 train/validation 炮号和模型结构写入训练摘要。
+三组实验还必须使用相同诊断通道。synthetic diagnostics 有 137 个
+完整字段，但真实数据部分通道有缺测；当前 mixed manifest 上的公共 finite 特征为
+94 维。固定顺序、数量和 SHA-256 digest 写在版本化文件
+`configs/diagnostic_features/mast_level2_common_94.json`，训练时不会静默重新求交集。
+若数据变化导致任一字段缺失或 non-finite，训练会直接报错，需要显式审查并更新 schema。
 
-这个阶段的目的：
-
-1. 验证 manifest、真实 Zarr、synthetic equilibrium 可以被同一个 Dataset 读取。
-2. 验证真实、仿真、混合三组实验可以使用同一个 TokaMind 训练入口。
-3. 先得到可比较的 smoke baseline，再决定是否补齐 synthetic magnetic diagnostics，
-   升级成严格 Tokamark 官方 `task_1-3`。
-
-训练 split 必须按 `parent_shot`/`shot_id` 分组，不能按 row 随机切分。同一个真实父
-shot 的 real 样本和 synthetic variants 必须在同一个 split，避免数据泄漏。当前
-split helper 会在父 shot 数量很少时至少保留一个验证父组，并优先把样本数较小的父组
-放入 validation，使训练集不会被不均衡父组切得过小。
-
-先 dry-run，不导入 torch、不训练，只验证 manifest 和数据读取：
+先 dry-run：
 
 ```bash
 source .tokamind-train-env/bin/activate
 
-python scripts/train_tokamind_manifest.py \
-  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl \
-  --dry-run \
-  --val-fraction 0.2
+COMMON=../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
+FEATURE_SCHEMA=configs/diagnostic_features/mast_level2_common_94.json
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$COMMON" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --run-dir ../runs/tokamind-diagnostics-mixed-dry-run \
+  --dry-run
 ```
 
-当前本地数据的 dry-run 参考输出：
+当前 mixed dry-run：
 
 ```text
-rows: 160
-sources: {"real": 40, "synthetic": 120}
-train_windows: 143
-val_windows: 17
-feature_dim: 22
-input_signal: fusion-state
-output_signal: equilibrium-psi
+rows: 390
+sources: {"real": 171, "synthetic": 219}
+train_windows: 327
+val_windows: 63
+feature_dim: 94
+input_mode: magnetic-diagnostics
+target_mode: raw-psi
 ```
 
-三组对比训练命令：
+三组对比训练：
 
 ```bash
-python scripts/train_tokamind_manifest.py \
-  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_real_only.jsonl \
-  --run-dir ../runs/tokamind-lao85-uniform-iter500-real-only \
-  --epochs 50 \
-  --batch-size 8 \
-  --lr 1e-4
+COMMON=../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
+FEATURE_SCHEMA=configs/diagnostic_features/mast_level2_common_94.json
 
-python scripts/train_tokamind_manifest.py \
-  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_synthetic_only.jsonl \
-  --run-dir ../runs/tokamind-lao85-uniform-iter500-synthetic-only \
-  --epochs 50 \
-  --batch-size 8 \
-  --lr 1e-4
+python scripts/train_tokamind_diagnostics.py \
+  --manifest ../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --run-dir ../runs/tokamind-diagnostics-real-only \
+  --epochs 50 --batch-size 8 --lr 1e-4
 
-python scripts/train_tokamind_manifest.py \
-  --manifest ../data/manifests/tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl \
-  --run-dir ../runs/tokamind-lao85-uniform-iter500-real-plus-synthetic \
-  --epochs 50 \
-  --batch-size 8 \
-  --lr 1e-4
+python scripts/train_tokamind_diagnostics.py \
+  --manifest ../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --run-dir ../runs/tokamind-diagnostics-synthetic-only \
+  --epochs 50 --batch-size 8 --lr 1e-4
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$COMMON" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --run-dir ../runs/tokamind-diagnostics-real-plus-synthetic \
+  --epochs 50 --batch-size 8 --lr 1e-4
 ```
 
-每个 run 会保存：
+模型调用 `external/tokamind/src/mmt` 的 `MultiModalTransformer` 和
+`train_finetune`。目标 `psi` 按训练集逐网格点标准化，loss 是 TokaMind
+`embed_mse`，即标准化预测 `psi` 与标准化标签 `psi` 的均方误差。每个 run 保存
+`manifest_scalers.npz` 和 `manifest_training_summary.json`，其中记录公共
+`feature_names`、input/output mean/std、manifest 和 loss history。
 
-```text
-../runs/<run-name>/
-├── manifest_scalers.npz
-└── manifest_training_summary.json
+### 8.1 统一真实验证集评估
+
+三组训练 loss 使用各自的标准化参数，不能直接横向比较。使用相同的真实 EFIT
+validation shots（11768、11775、11780）反标准化后计算 `psi` RMSE/MAE：
+
+```bash
+source .tokamind-train-env/bin/activate
+python scripts/evaluate_tokamind_diagnostics.py
 ```
 
-训练脚本会调用 `external/tokamind/src/mmt` 中的 `MultiModalTransformer` 和
-`train_finetune`。该模型是 transformer；这里每个样本被包装成一个 MMT window，
-输入信号名为 `fusion-state`，输出信号名为 `equilibrium-psi`。
+该入口固定使用当前 diagnostics real-only manifest、三组 diagnostics checkpoint 和
+以下 28 个真实样本：
 
-注意：如果要宣称严格复现 Tokamark 官方 `task_1-3`，还需要为 synthetic 样本生成
-对应的 synthetic magnetic diagnostics，例如 flux loop、poloidal probe、saddle
-voltage 等输入信号。目前这个训练入口是小规模物理参数到 `psi` 的桥接 baseline。
+| Shot | 样本数 | 时间切片 / s |
+|---|---:|---|
+| 11768 | 7 | 0.160、0.185、0.190、0.195、0.200、0.205、0.210 |
+| 11775 | 10 | 0.120、0.125、0.140、0.155、0.160、0.165、0.170、0.210、0.215、0.225 |
+| 11780 | 11 | 0.125、0.140、0.145、0.170、0.195、0.205、0.210、0.215、0.225、0.230、0.235 |
+
+当前 28 个真实 validation 样本上的结果：
+
+| 训练数据 | Raw psi RMSE | Raw psi MAE |
+|---|---:|---:|
+| 仅真实数据 | 0.001947 | 0.001272 |
+| 仅仿真数据 | 0.044866 | 0.035819 |
+| 真实 + 仿真 | 0.002213 | 0.001681 |
+
+这些炮在训练时未进入 train split，但参与了最佳 checkpoint 的选择，因此应称为
+统一真实 validation set，而不是完全独立的 test set。
+
+评估入口会从训练摘要恢复模型结构，并检查待评估炮没有出现在 train split 中；
+训练摘要或 checkpoint 缺失时会直接拒绝评估。
+
+当前输入覆盖 flux loop 与 CCBV/OBR/OBV pickup probes，还没有加入 saddle voltage
+和时间序列窗口；因此这是 diagnostics-to-psi 的最小任务，不应描述成完整复现
+Tokamark 所有诊断任务。
 
 ## 9. 验证
 
@@ -1274,7 +1337,11 @@ python -m py_compile \
   scripts/build_lao_fit_npz.py \
   scripts/inspect_shot.py \
   scripts/plot_mast_geometry.py \
-  scripts/run_freegsnke_forward.py
+  scripts/run_freegsnke_forward.py \
+  scripts/build_synthetic_magnetic_diagnostics.py \
+  scripts/build_experiment_manifests.py \
+  scripts/train_tokamind_diagnostics.py \
+  scripts/evaluate_tokamind_diagnostics.py
 ```
 
 阶段检查：
@@ -1285,6 +1352,7 @@ test -d ../data/raw/mast/machine/11771
 test -f ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 test -f ../data/processed/synthetic/11771_t0.16/equilibrium.npz
 test -f ../data/processed/synthetic/11771_t0.16/metadata.json
+test -f ../data/processed/synthetic/11771_t0.16/diagnostics.npz
 ```
 
 几何图：

@@ -9,11 +9,15 @@ import numpy as np
 import zarr
 
 from mast_bridge.training.tokamind_manifest import (
+    INPUT_MAGNETIC_DIAGNOSTICS,
     ManifestWindowDataset,
     build_manifest_datasets,
+    diagnostic_feature_names,
+    diagnostic_feature_vector,
     load_manifest_rows,
     normalize_psi,
 )
+from mast_bridge.simulation.synthetic_diagnostics import write_synthetic_diagnostics
 
 
 class TokamindManifestTrainingTests(unittest.TestCase):
@@ -33,6 +37,30 @@ class TokamindManifestTrainingTests(unittest.TestCase):
         active.create_array(
             "coil_current",
             data=np.asarray([[10.0, 12.0], [20.0, 22.0]], dtype=np.float32),
+        )
+
+        magnetics = z.create_group("magnetics")
+        magnetics.create_array("time", data=np.asarray([0.10, 0.11], dtype=np.float64))
+        magnetics.create_array("ip", data=np.asarray([1000.0, 1100.0], dtype=np.float32))
+        magnetics.create_array("flux_loop_channel", data=np.asarray(["FL1", "FL2"], dtype="<U3"))
+        magnetics.create_array(
+            "flux_loop_flux",
+            data=np.asarray([[1.0, 1.2], [2.0, 2.2]], dtype=np.float32),
+        )
+        magnetics.create_array("b_field_pol_probe_ccbv_channel", data=np.asarray(["CCBV01"], dtype="<U6"))
+        magnetics.create_array(
+            "b_field_pol_probe_ccbv_field",
+            data=np.asarray([[3.0, 3.2]], dtype=np.float32),
+        )
+        magnetics.create_array("b_field_pol_probe_obr_channel", data=np.asarray(["OBR01"], dtype="<U5"))
+        magnetics.create_array(
+            "b_field_pol_probe_obr_field",
+            data=np.asarray([[4.0, 4.2]], dtype=np.float32),
+        )
+        magnetics.create_array("b_field_pol_probe_obv_channel", data=np.asarray(["OBV01"], dtype="<U5"))
+        magnetics.create_array(
+            "b_field_pol_probe_obv_field",
+            data=np.asarray([[5.0, 5.2]], dtype=np.float32),
         )
         return shot_path
 
@@ -147,6 +175,148 @@ class TokamindManifestTrainingTests(unittest.TestCase):
             np.testing.assert_allclose(dataset.output_mean, np.full(65 * 65, 0.5))
             np.testing.assert_allclose(dataset[0]["output_emb"][1], np.zeros(65 * 65))
 
+    def test_diagnostic_feature_vector_reads_real_magnetic_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_zarr = self._write_real_shot(root, "11772")
+            row = {
+                "sample_id": "11772_t0.11_real",
+                "source": "real",
+                "shot_id": "11772",
+                "data_path": str(real_zarr),
+                "target_time": 0.11,
+            }
+
+            names = diagnostic_feature_names([row])
+            values = diagnostic_feature_vector(row, names)
+
+            self.assertEqual(
+                names,
+                [
+                    "target_time",
+                    "magnetics_ip",
+                    "flux_loop_FL1",
+                    "flux_loop_FL2",
+                    "pickup_CCBV_CCBV01",
+                    "pickup_OBR_OBR01",
+                    "pickup_OBV_OBV01",
+                    "coil_active_P2",
+                    "coil_active_SOL",
+                ],
+            )
+            np.testing.assert_allclose(values, [0.11, 1100.0, 1.2, 2.2, 3.2, 4.2, 5.2, 22.0, 12.0])
+
+    def test_diagnostic_feature_names_drop_nonfinite_channels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_zarr = self._write_real_shot(root, "11772")
+            z = zarr.open_group(str(real_zarr), mode="a")
+            z["magnetics"]["flux_loop_flux"][0, 1] = np.nan
+            rows = [
+                {
+                    "sample_id": "11772_t0.11_real",
+                    "source": "real",
+                    "shot_id": "11772",
+                    "data_path": str(real_zarr),
+                    "target_time": 0.11,
+                }
+            ]
+
+            names = diagnostic_feature_names(rows)
+
+            self.assertNotIn("flux_loop_FL1", names)
+            self.assertIn("flux_loop_FL2", names)
+
+    def test_real_active_coil_currents_are_interpolated_at_target_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real_zarr = self._write_real_shot(Path(tmp), "11772")
+            row = {
+                "sample_id": "11772_t0.105_real",
+                "source": "real",
+                "shot_id": "11772",
+                "data_path": str(real_zarr),
+                "target_time": 0.105,
+            }
+
+            values = diagnostic_feature_vector(
+                row,
+                ["coil_active_SOL", "coil_active_P2"],
+            )
+
+        np.testing.assert_allclose(values, [11.0, 21.0])
+
+    def test_manifest_dataset_can_use_magnetic_diagnostic_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_zarr = self._write_real_shot(root, "11772")
+            fit_path = self._write_fit(root, "11772")
+            rows = [
+                {
+                    "sample_id": "11772_t0.11_real",
+                    "source": "real",
+                    "shot_id": "11772",
+                    "data_path": str(real_zarr),
+                    "fit_path": str(fit_path),
+                    "target_time": 0.11,
+                }
+            ]
+
+            dataset = ManifestWindowDataset.from_rows(rows, input_mode=INPUT_MAGNETIC_DIAGNOSTICS)
+
+            self.assertIn("flux_loop_FL1", dataset.feature_names)
+            self.assertIn("pickup_OBR_OBR01", dataset.feature_names)
+            self.assertNotIn("alpha_0", dataset.feature_names)
+            self.assertEqual(dataset[0]["emb_chunks"][0].shape, (len(dataset.feature_names),))
+
+    def test_diagnostic_feature_vector_reads_synthetic_magnetic_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic_dir = self._write_synthetic_sample(root)
+            diagnostics_path = write_synthetic_diagnostics(
+                synthetic_dir / "diagnostics.npz",
+                target_time=0.10,
+                magnetics_ip=120_000.0,
+                flux_loop_names=["FL1", "FL2"],
+                flux_loop_values=[1.5, 2.5],
+                pickup_names=["CCBV01", "OBR01", "OBV01"],
+                pickup_families=["CCBV", "OBR", "OBV"],
+                pickup_values=[3.5, 4.5, 5.5],
+                active_coil_currents={"SOL": 30.0, "P2": 40.0},
+                flux_loop_scale=2.0 * np.pi,
+            )
+            row = {
+                "sample_id": "11772_t0.10_v000",
+                "source": "synthetic",
+                "shot_id": "11772_t0.10_v000",
+                "parent_shot": "11772",
+                "data_path": str(synthetic_dir),
+                "equilibrium_path": str(synthetic_dir / "equilibrium.npz"),
+                "diagnostics_path": str(diagnostics_path),
+                "target_time": 0.10,
+            }
+
+            names = diagnostic_feature_names([row])
+            values = diagnostic_feature_vector(row, names)
+
+        self.assertEqual(
+            names,
+            [
+                "target_time",
+                "magnetics_ip",
+                "flux_loop_FL1",
+                "flux_loop_FL2",
+                "pickup_CCBV_CCBV01",
+                "pickup_OBR_OBR01",
+                "pickup_OBV_OBV01",
+                "coil_active_P2",
+                "coil_active_SOL",
+            ],
+        )
+        np.testing.assert_allclose(
+            values,
+            [0.10, 120_000.0, 1.5, 2.5, 3.5, 4.5, 5.5, 40.0, 30.0],
+        )
+
     def test_build_manifest_datasets_uses_deterministic_train_val_split(self):
         rows = [
             {
@@ -179,6 +349,94 @@ class TokamindManifestTrainingTests(unittest.TestCase):
             self.assertEqual(train.feature_names, val.feature_names)
             self.assertEqual(train.output_mean.shape, (65 * 65,))
             self.assertEqual(train.output_std.shape, (65 * 65,))
+
+    def test_build_manifest_datasets_honors_explicit_validation_shots(self):
+        rows = [
+            {
+                "sample_id": f"{shot}_sample",
+                "source": "synthetic",
+                "shot_id": f"{shot}_sample",
+                "parent_shot": shot,
+                "target_time": 0.1,
+                "Ip": 1.0,
+                "fvac": 0.4,
+                "alpha": [1.0, 2.0, 3.0],
+                "beta": [4.0, 5.0, 6.0],
+                "coil_currents": {"active": {"SOL": float(index)}},
+            }
+            for index, shot in enumerate(["11766", "11768", "11775", "11780"])
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index, row in enumerate(rows):
+                sample = root / row["sample_id"]
+                sample.mkdir()
+                np.savez_compressed(
+                    sample / "equilibrium.npz",
+                    psi=np.full((65, 65), index, dtype=np.float32),
+                )
+                row["data_path"] = str(sample)
+                row["equilibrium_path"] = str(sample / "equilibrium.npz")
+
+            train, val = build_manifest_datasets(
+                rows,
+                val_shots=["11768", "11775", "11780"],
+            )
+
+        self.assertEqual([row["parent_shot"] for row in train.rows], ["11766"])
+        self.assertEqual(
+            [row["parent_shot"] for row in val.rows],
+            ["11768", "11775", "11780"],
+        )
+
+    def test_build_manifest_datasets_uses_explicit_common_feature_names(self):
+        rows = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(3):
+                case_root = root / f"case{index}"
+                case_root.mkdir()
+                sample = self._write_synthetic_sample(case_root)
+                diagnostics_path = write_synthetic_diagnostics(
+                    sample / "diagnostics.npz",
+                    target_time=0.10,
+                    magnetics_ip=100_000.0 + index,
+                    flux_loop_names=["FL1", "FL2"],
+                    flux_loop_values=[1.0 + index, 2.0 + index],
+                    pickup_names=["OBR01"],
+                    pickup_families=["OBR"],
+                    pickup_values=[3.0 + index],
+                    active_coil_currents={"SOL": 10.0 + index},
+                    flux_loop_scale=2.0 * np.pi,
+                )
+                rows.append(
+                    {
+                        "sample_id": f"s{index}",
+                        "source": "synthetic",
+                        "shot_id": f"s{index}",
+                        "parent_shot": f"s{index}",
+                        "target_time": 0.10,
+                        "data_path": str(sample),
+                        "equilibrium_path": str(sample / "equilibrium.npz"),
+                        "diagnostics_path": str(diagnostics_path),
+                    }
+                )
+
+            common_names = [
+                "target_time",
+                "magnetics_ip",
+                "flux_loop_FL1",
+            ]
+            train, val = build_manifest_datasets(
+                rows,
+                val_fraction=0.34,
+                seed=7,
+                input_mode=INPUT_MAGNETIC_DIAGNOSTICS,
+                feature_names=common_names,
+            )
+
+        self.assertEqual(train.feature_names, common_names)
+        self.assertEqual(val.feature_names, common_names)
 
     def test_build_manifest_datasets_keeps_parent_shots_in_one_split(self):
         rows = []

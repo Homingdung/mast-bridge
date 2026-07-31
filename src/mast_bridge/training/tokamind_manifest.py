@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,14 @@ from typing import Any, Iterable
 import numpy as np
 
 from mast_bridge.dataset.splits import assign_parent_shot_splits, split_for_row
+from mast_bridge.simulation.magnetic_diagnostics import (
+    observed_flux_loop_signals,
+    observed_pickup_signals,
+    observed_plasma_current,
+)
+from mast_bridge.simulation.synthetic_diagnostics import (
+    load_synthetic_diagnostic_values,
+)
 
 
 INPUT_SIGNAL_ID = 0
@@ -17,6 +26,10 @@ ROLE_CONTEXT = 0
 TARGET_RAW_PSI = "raw-psi"
 TARGET_PSI_NORM = "psi-norm"
 TARGET_MODES = {TARGET_RAW_PSI, TARGET_PSI_NORM}
+INPUT_LAO_PARAMS = "lao-params"
+INPUT_MAGNETIC_DIAGNOSTICS = "magnetic-diagnostics"
+INPUT_MODES = {INPUT_LAO_PARAMS, INPUT_MAGNETIC_DIAGNOSTICS}
+FEATURE_SCHEMA_VERSION = 1
 
 
 def load_manifest_rows(path: str | Path) -> list[dict[str, Any]]:
@@ -27,6 +40,33 @@ def load_manifest_rows(path: str | Path) -> list[dict[str, Any]]:
         if line.strip():
             rows.append(json.loads(line))
     return rows
+
+
+def feature_schema_digest(feature_names: Iterable[str]) -> str:
+    return hashlib.sha256(
+        "\n".join(str(name) for name in feature_names).encode("utf-8")
+    ).hexdigest()
+
+
+def load_feature_schema(path: str | Path) -> list[str]:
+    """Load and integrity-check a versioned feature-name schema."""
+    schema_path = Path(path).expanduser().resolve()
+    payload = json.loads(schema_path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != FEATURE_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported feature schema version in {schema_path}")
+    names = payload.get("feature_names")
+    if (
+        not isinstance(names, list)
+        or not names
+        or any(not isinstance(name, str) or not name for name in names)
+        or len(set(names)) != len(names)
+    ):
+        raise ValueError(f"Invalid feature names in {schema_path}")
+    if payload.get("feature_count") != len(names):
+        raise ValueError(f"Feature schema count mismatch in {schema_path}")
+    if payload.get("feature_names_sha256") != feature_schema_digest(names):
+        raise ValueError(f"Feature schema digest mismatch in {schema_path}")
+    return names
 
 
 def _nearest_index(times: Any, target_time: float) -> int:
@@ -65,10 +105,27 @@ def _active_currents_from_real_row(row: dict[str, Any]) -> dict[str, float]:
 
     root = zarr.open_group(str(Path(row["data_path"]).expanduser().resolve()), mode="r")
     active = root["pf_active"]
-    index = _nearest_index(active["time"][:], float(row["target_time"]))
+    times = np.asarray(active["time"][:], dtype=float)
     channels = [str(value) for value in active["current_channel"][:]]
     currents = np.asarray(active["coil_current"][:], dtype=float)
-    return {channel: float(currents[channel_index, index]) for channel_index, channel in enumerate(channels)}
+    return {
+        channel: float(
+            np.interp(float(row["target_time"]), times, currents[channel_index])
+        )
+        for channel_index, channel in enumerate(channels)
+    }
+
+
+def _real_magnetics_group(row: dict[str, Any]) -> Any:
+    try:
+        import zarr
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Reading real manifest rows requires the optional 'zarr' package") from exc
+
+    root = zarr.open_group(str(Path(row["data_path"]).expanduser().resolve()), mode="r")
+    if "magnetics" not in root:
+        raise ValueError(f"Real row {row.get('sample_id')!r} is missing magnetics group")
+    return root["magnetics"]
 
 
 def _real_psi(row: dict[str, Any]) -> np.ndarray:
@@ -209,7 +266,7 @@ def _coil_names(rows: Iterable[dict[str, Any]]) -> list[str]:
     return sorted(names)
 
 
-def _feature_names(rows: Iterable[dict[str, Any]]) -> list[str]:
+def _lao_feature_names(rows: Iterable[dict[str, Any]]) -> list[str]:
     return (
         ["target_time", "Ip", "fvac"]
         + [f"alpha_{index}" for index in range(3)]
@@ -218,7 +275,7 @@ def _feature_names(rows: Iterable[dict[str, Any]]) -> list[str]:
     )
 
 
-def _feature_vector(row: dict[str, Any], feature_names: list[str]) -> np.ndarray:
+def _lao_feature_vector(row: dict[str, Any], feature_names: list[str]) -> np.ndarray:
     params = _row_parameters(row)
     alpha = list(params.get("alpha") or [])
     beta = list(params.get("beta") or [])
@@ -236,6 +293,106 @@ def _feature_vector(row: dict[str, Any], feature_names: list[str]) -> np.ndarray
         values[f"coil_active_{name}"] = float(active[name])
 
     return np.asarray([values.get(name, 0.0) for name in feature_names], dtype=np.float32)
+
+
+def _real_diagnostic_values(row: dict[str, Any]) -> dict[str, float]:
+    target_time = float(row["target_time"])
+    magnetics = _real_magnetics_group(row)
+    flux = observed_flux_loop_signals(magnetics, target_time)
+    pickups = observed_pickup_signals(magnetics, target_time)
+    active = _active_currents_from_real_row(row)
+    values: dict[str, float] = {
+        "target_time": target_time,
+        "magnetics_ip": observed_plasma_current(magnetics, target_time),
+    }
+    values.update({f"flux_loop_{name}": float(value) for name, value in zip(flux.names, flux.values)})
+    if pickups.families is None:
+        values.update({f"pickup_{name}": float(value) for name, value in zip(pickups.names, pickups.values)})
+    else:
+        values.update(
+            {
+                f"pickup_{family}_{name}": float(value)
+                for family, name, value in zip(pickups.families, pickups.names, pickups.values)
+            }
+        )
+    values.update({f"coil_active_{name}": float(value) for name, value in active.items()})
+    return values
+
+
+def _synthetic_diagnostic_values(row: dict[str, Any]) -> dict[str, float]:
+    diagnostics_path = row.get("diagnostics_path")
+    if not diagnostics_path:
+        diagnostics_path = (
+            Path(row["data_path"]).expanduser().resolve() / "diagnostics.npz"
+        )
+    return load_synthetic_diagnostic_values(diagnostics_path)
+
+
+def _diagnostic_values(row: dict[str, Any]) -> dict[str, float]:
+    if row.get("source") == "real":
+        return _real_diagnostic_values(row)
+    if row.get("source") == "synthetic":
+        return _synthetic_diagnostic_values(row)
+    raise ValueError(
+        f"Unknown diagnostic row source {row.get('source')!r} for "
+        f"{row.get('sample_id')!r}"
+    )
+
+
+def diagnostic_feature_names(rows: Iterable[dict[str, Any]]) -> list[str]:
+    row_values = [_diagnostic_values(row) for row in rows]
+    names: set[str] = {"target_time", "magnetics_ip"}
+    for values in row_values:
+        names.update(values)
+    finite_names = {
+        name
+        for name in names
+        if all(np.isfinite(values.get(name, np.nan)) for values in row_values)
+    }
+    flux_names = sorted(name for name in names if name.startswith("flux_loop_"))
+    pickup_names = sorted(name for name in names if name.startswith("pickup_"))
+    coil_names = sorted(name for name in names if name.startswith("coil_active_"))
+    extra_names = sorted(
+        name
+        for name in names
+        if name not in {"target_time", "magnetics_ip"}
+        and not name.startswith(("flux_loop_", "pickup_", "coil_active_"))
+    )
+    ordered = ["target_time", "magnetics_ip"] + flux_names + pickup_names + coil_names + extra_names
+    return [name for name in ordered if name in finite_names]
+
+
+def diagnostic_feature_vector(row: dict[str, Any], feature_names: list[str]) -> np.ndarray:
+    values = _diagnostic_values(row)
+    vector = np.asarray([values.get(name, np.nan) for name in feature_names], dtype=np.float32)
+    if not np.isfinite(vector).all():
+        bad = [feature_names[index] for index in np.flatnonzero(~np.isfinite(vector))]
+        raise ValueError(f"Non-finite diagnostic features for {row.get('sample_id')!r}: {bad}")
+    return vector
+
+
+def _feature_names(rows: Iterable[dict[str, Any]], input_mode: str = INPUT_LAO_PARAMS) -> list[str]:
+    if input_mode == INPUT_LAO_PARAMS:
+        return _lao_feature_names(rows)
+    if input_mode == INPUT_MAGNETIC_DIAGNOSTICS:
+        return diagnostic_feature_names(rows)
+    raise ValueError(f"Unknown input_mode {input_mode!r}; expected one of {sorted(INPUT_MODES)}")
+
+
+def feature_names_for_rows(
+    rows: Iterable[dict[str, Any]],
+    input_mode: str = INPUT_LAO_PARAMS,
+) -> list[str]:
+    """Return the ordered finite feature schema for a reference row set."""
+    return _feature_names(rows, input_mode)
+
+
+def _feature_vector(row: dict[str, Any], feature_names: list[str], input_mode: str = INPUT_LAO_PARAMS) -> np.ndarray:
+    if input_mode == INPUT_LAO_PARAMS:
+        return _lao_feature_vector(row, feature_names)
+    if input_mode == INPUT_MAGNETIC_DIAGNOSTICS:
+        return diagnostic_feature_vector(row, feature_names)
+    raise ValueError(f"Unknown input_mode {input_mode!r}; expected one of {sorted(INPUT_MODES)}")
 
 
 def _psi_for_row(row: dict[str, Any], target_mode: str = TARGET_RAW_PSI) -> np.ndarray:
@@ -261,6 +418,7 @@ class ManifestWindowDataset:
     output_mean: np.ndarray
     output_std: np.ndarray
     target_mode: str = TARGET_RAW_PSI
+    input_mode: str = INPUT_LAO_PARAMS
 
     @classmethod
     def from_rows(
@@ -273,14 +431,17 @@ class ManifestWindowDataset:
         output_mean: np.ndarray | None = None,
         output_std: np.ndarray | None = None,
         target_mode: str = TARGET_RAW_PSI,
+        input_mode: str = INPUT_LAO_PARAMS,
     ) -> "ManifestWindowDataset":
         if not rows:
             raise ValueError("ManifestWindowDataset requires at least one row")
         if target_mode not in TARGET_MODES:
             raise ValueError(f"Unknown target_mode {target_mode!r}; expected one of {sorted(TARGET_MODES)}")
+        if input_mode not in INPUT_MODES:
+            raise ValueError(f"Unknown input_mode {input_mode!r}; expected one of {sorted(INPUT_MODES)}")
 
-        features = feature_names or _feature_names(rows)
-        input_matrix = np.stack([_feature_vector(row, features) for row in rows], axis=0)
+        features = feature_names or _feature_names(rows, input_mode)
+        input_matrix = np.stack([_feature_vector(row, features, input_mode) for row in rows], axis=0)
         output_matrix = np.stack([_psi_for_row(row, target_mode).reshape(-1) for row in rows], axis=0)
 
         return cls(
@@ -289,10 +450,11 @@ class ManifestWindowDataset:
             input_mean=np.asarray(input_mean if input_mean is not None else input_matrix.mean(axis=0), dtype=np.float32),
             input_std=np.asarray(input_std if input_std is not None else input_matrix.std(axis=0), dtype=np.float32),
             output_mean=np.asarray(
-                output_mean if output_mean is not None else output_matrix.mean(axis=0), dtype=np.float32
+            output_mean if output_mean is not None else output_matrix.mean(axis=0), dtype=np.float32
             ),
             output_std=np.asarray(output_std if output_std is not None else output_matrix.std(axis=0), dtype=np.float32),
             target_mode=target_mode,
+            input_mode=input_mode,
         )
 
     def __len__(self) -> int:
@@ -300,7 +462,7 @@ class ManifestWindowDataset:
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.rows[index]
-        features = _standardize(_feature_vector(row, self.feature_names), self.input_mean, self.input_std)
+        features = _standardize(_feature_vector(row, self.feature_names, self.input_mode), self.input_mean, self.input_std)
         psi = _standardize(_psi_for_row(row, self.target_mode).reshape(-1), self.output_mean, self.output_std)
 
         return {
@@ -324,7 +486,10 @@ def build_manifest_datasets(
     *,
     val_fraction: float = 0.2,
     seed: int = 54,
+    val_shots: list[str] | None = None,
     target_mode: str = TARGET_RAW_PSI,
+    input_mode: str = INPUT_LAO_PARAMS,
+    feature_names: list[str] | None = None,
 ) -> tuple[ManifestWindowDataset, ManifestWindowDataset]:
     """Build train/validation datasets with shared feature and normalization statistics."""
     if not 0.0 < val_fraction < 1.0:
@@ -332,28 +497,53 @@ def build_manifest_datasets(
     if len(rows) < 2:
         raise ValueError("At least two manifest rows are required for train/val split")
 
-    assignments = assign_parent_shot_splits(
-        rows,
-        train_fraction=1.0 - val_fraction,
-        val_fraction=val_fraction,
-        seed=seed,
-    )
-    train_rows = [row for row in rows if split_for_row(row, assignments) == "train"]
-    val_rows = [row for row in rows if split_for_row(row, assignments) == "val"]
+    if val_shots is None:
+        assignments = assign_parent_shot_splits(
+            rows,
+            train_fraction=1.0 - val_fraction,
+            val_fraction=val_fraction,
+            seed=seed,
+        )
+        train_rows = [row for row in rows if split_for_row(row, assignments) == "train"]
+        val_rows = [row for row in rows if split_for_row(row, assignments) == "val"]
+    else:
+        requested = {str(shot) for shot in val_shots}
+        if not requested:
+            raise ValueError("val_shots cannot be empty")
+
+        def parent_shot(row: dict[str, Any]) -> str:
+            return str(
+                row.get("parent_shot")
+                if row.get("source") == "synthetic"
+                else row.get("shot_id")
+            )
+
+        available = {parent_shot(row) for row in rows}
+        missing = sorted(requested - available)
+        if missing:
+            raise ValueError(f"Validation shots are missing from manifest: {missing}")
+        train_rows = [row for row in rows if parent_shot(row) not in requested]
+        val_rows = [row for row in rows if parent_shot(row) in requested]
     if not train_rows:
         raise ValueError("Train split is empty")
     if not val_rows:
         raise ValueError("Validation split is empty")
 
-    feature_names = _feature_names(rows)
-    base = ManifestWindowDataset.from_rows(train_rows, feature_names=feature_names, target_mode=target_mode)
+    resolved_feature_names = feature_names or _feature_names(rows, input_mode)
+    base = ManifestWindowDataset.from_rows(
+        train_rows,
+        feature_names=resolved_feature_names,
+        target_mode=target_mode,
+        input_mode=input_mode,
+    )
     val = ManifestWindowDataset.from_rows(
         val_rows,
-        feature_names=feature_names,
+        feature_names=resolved_feature_names,
         input_mean=base.input_mean,
         input_std=base.input_std,
         output_mean=base.output_mean,
         output_std=base.output_std,
         target_mode=target_mode,
+        input_mode=input_mode,
     )
     return base, val

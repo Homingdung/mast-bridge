@@ -8,7 +8,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from mast_bridge.dataset.synthetic_manifest import synthetic_entries
+from mast_bridge.dataset.synthetic_manifest import rejection_reason, synthetic_entries
 
 
 class SyntheticManifestTests(unittest.TestCase):
@@ -134,6 +134,42 @@ class SyntheticManifestTests(unittest.TestCase):
             rows = synthetic_entries(root, task="task_1-3")
 
         self.assertEqual(rows, [])
+
+    def test_rejects_nonfinite_solver_tolerance(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            equilibrium_path = Path(temp_dir) / "equilibrium.npz"
+            np.savez_compressed(
+                equilibrium_path,
+                psi=np.zeros((65, 65)),
+            )
+
+            reason = rejection_reason(
+                {
+                    "solver_converged": True,
+                    "solver_final_tolerance": float("nan"),
+                },
+                equilibrium_path,
+            )
+
+        self.assertEqual(reason, "solver_tolerance_nonfinite")
+
+    def test_rejects_finite_psi_with_wrong_grid_shape(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            equilibrium_path = Path(temp_dir) / "equilibrium.npz"
+            np.savez_compressed(
+                equilibrium_path,
+                psi=np.zeros((64, 65)),
+            )
+
+            reason = rejection_reason(
+                {
+                    "solver_converged": True,
+                    "solver_final_tolerance": 9e-9,
+                },
+                equilibrium_path,
+            )
+
+        self.assertEqual(reason, "invalid_equilibrium")
 
 
 if __name__ == "__main__":

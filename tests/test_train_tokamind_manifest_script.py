@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -10,14 +11,28 @@ from pathlib import Path
 import numpy as np
 
 import scripts.train_tokamind_manifest as train_script
+from mast_bridge.training.tokamind_manifest import load_feature_schema
 
 
 class TrainTokamindManifestScriptTests(unittest.TestCase):
-    def test_default_manifest_uses_current_uniform_iter500_mixed_manifest(self):
-        self.assertEqual(
-            train_script.DEFAULT_MANIFEST.name,
-            "tokamark_lao85_uniform_iter500_real_plus_synthetic.jsonl",
+    def test_generic_entry_requires_explicit_manifest_and_run_dir(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/train_tokamind_manifest.py",
+                "--manifest",
+                "manifest.jsonl",
+                "--run-dir",
+                "run",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            capture_output=True,
+            check=False,
         )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("required: --input-mode", result.stderr)
 
     def test_dry_run_reports_manifest_dataset_summary_without_torch(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,6 +73,10 @@ class TrainTokamindManifestScriptTests(unittest.TestCase):
                     "scripts/train_tokamind_manifest.py",
                     "--manifest",
                     str(manifest),
+                    "--run-dir",
+                    str(root / "run"),
+                    "--input-mode",
+                    "lao-params",
                     "--target-mode",
                     "psi-norm",
                     "--dry-run",
@@ -74,9 +93,37 @@ class TrainTokamindManifestScriptTests(unittest.TestCase):
             self.assertIn("rows: 3", result.stdout)
             self.assertIn("train_windows: 2", result.stdout)
             self.assertIn("val_windows: 1", result.stdout)
+            self.assertIn("input_mode: lao-params", result.stdout)
             self.assertIn("target_mode: psi-norm", result.stdout)
             self.assertIn("input_signal: fusion-state", result.stdout)
             self.assertIn("output_signal: equilibrium-psi", result.stdout)
+
+    def test_load_feature_schema_verifies_digest_and_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "features.json"
+            names = ["target_time", "magnetics_ip", "flux_loop_FL1"]
+            digest = hashlib.sha256("\n".join(names).encode("utf-8")).hexdigest()
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "feature_count": 3,
+                        "feature_names_sha256": digest,
+                        "feature_names": names,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = load_feature_schema(path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["feature_names"][2] = "flux_loop_WRONG"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "digest"):
+                load_feature_schema(path)
+
+        self.assertEqual(loaded, names)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -64,10 +65,81 @@ class EvaluateTokamindManifestScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Evaluate one or more TokaMind manifest runs", result.stdout)
 
-    def test_resolve_target_mode_prefers_cli_then_scaler_then_raw_default(self):
-        self.assertEqual(MODULE.resolve_target_mode("psi-norm", {"target_mode": "raw-psi"}), "psi-norm")
-        self.assertEqual(MODULE.resolve_target_mode(None, {"target_mode": "psi-norm"}), "psi-norm")
-        self.assertEqual(MODULE.resolve_target_mode(None, {}), "raw-psi")
+    def test_generic_entry_requires_explicit_manifest_and_run_dir(self):
+        result = subprocess.run(
+            [sys.executable, "scripts/evaluate_tokamind_manifest.py"],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--manifest", result.stderr)
+        self.assertIn("--run-dir", result.stderr)
+
+    def test_resolve_target_mode_requires_scaler_and_summary_to_match(self):
+        self.assertEqual(
+            MODULE.resolve_target_mode(
+                {"target_mode": "raw-psi"},
+                {"target_mode": "raw-psi"},
+            ),
+            "raw-psi",
+        )
+        with self.assertRaisesRegex(ValueError, "target_mode mismatch"):
+            MODULE.resolve_target_mode(
+                {"target_mode": "raw-psi"},
+                {"target_mode": "psi-norm"},
+            )
+
+    def test_load_scalers_preserves_magnetic_diagnostics_input_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            np.savez_compressed(
+                run_dir / "manifest_scalers.npz",
+                feature_names=np.asarray(["magnetics.ip"], dtype=object),
+                input_mean=np.asarray([0.0], dtype=np.float32),
+                input_std=np.asarray([1.0], dtype=np.float32),
+                output_mean=np.asarray([0.0], dtype=np.float32),
+                output_std=np.asarray([1.0], dtype=np.float32),
+                input_mode=np.asarray("magnetic-diagnostics"),
+                target_mode=np.asarray("raw-psi"),
+            )
+
+            scalers = MODULE._load_scalers(run_dir)
+
+        self.assertEqual(scalers["input_mode"], "magnetic-diagnostics")
+
+    def test_model_config_comes_from_training_summary(self):
+        summary = {
+            "model_config": {
+                "d_model": 64,
+                "n_layers": 2,
+                "n_heads": 4,
+                "dim_ff": 128,
+                "dropout": 0.05,
+            }
+        }
+
+        config = MODULE.resolve_model_config(summary)
+
+        self.assertEqual(config["d_model"], 64)
+        self.assertEqual(config["n_layers"], 2)
+        self.assertEqual(config["n_heads"], 4)
+
+    def test_validation_split_rejects_training_shot_leakage(self):
+        summary = {
+            "train_shots": ["11766", "11768"],
+            "val_shots": ["11775", "11780"],
+        }
+        rows = [{"shot_id": "11768"}, {"shot_id": "11775"}]
+
+        with self.assertRaisesRegex(ValueError, "training split"):
+            MODULE.validate_evaluation_split(summary, rows)
+
+    def test_missing_checkpoint_is_rejected(self):
+        with self.assertRaisesRegex(FileNotFoundError, "checkpoint"):
+            MODULE.require_loaded_checkpoint(-1, Path("missing-run"))
 
 
 if __name__ == "__main__":

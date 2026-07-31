@@ -24,3 +24,8 @@ data/
 .mast-process-env/
 .tokamind-train-env/
 configs/
+!configs/
+configs/*
+!configs/diagnostic_features/
+configs/diagnostic_features/*
+!configs/diagnostic_features/mast_level2_common_94.json

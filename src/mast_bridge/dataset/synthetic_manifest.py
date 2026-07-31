@@ -15,7 +15,7 @@ def _is_finite_equilibrium(path: Path) -> bool:
     try:
         with np.load(path) as equilibrium:
             psi = np.asarray(equilibrium["psi"])
-            return bool(psi.size and np.isfinite(psi).all())
+            return bool(psi.shape == (65, 65) and np.isfinite(psi).all())
     except (OSError, KeyError, ValueError):
         return False
 
@@ -32,6 +32,8 @@ def rejection_reason(
         final_tolerance = float(metadata["solver_final_tolerance"])
     except (KeyError, TypeError, ValueError):
         return "solver_tolerance_missing"
+    if not np.isfinite(final_tolerance):
+        return "solver_tolerance_nonfinite"
     if final_tolerance > max_solver_tolerance:
         return "solver_tolerance_above_threshold"
     if not _is_finite_equilibrium(equilibrium_path):
@@ -46,7 +48,11 @@ def _is_converged(
         final_tolerance = float(metadata["solver_final_tolerance"])
     except (KeyError, TypeError, ValueError):
         return False
-    return metadata.get("solver_converged") is True and final_tolerance <= max_solver_tolerance
+    return (
+        metadata.get("solver_converged") is True
+        and np.isfinite(final_tolerance)
+        and final_tolerance <= max_solver_tolerance
+    )
 
 
 def synthetic_entries(
