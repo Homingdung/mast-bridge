@@ -10,22 +10,17 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-EXTERNAL_REPOS = ("tokamark", "tokamind", "freegsnke", "LARGE_MODEL_FUSION")
+EXTERNAL_REPOS = ("tokamind", "freegsnke")
 CLONE_URLS = {
-    "tokamark_root": ("https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamark.git", "external/tokamark"),
     "tokamind_root": ("https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git", "external/tokamind"),
     "freegsnke_root": ("https://github.com/FusionComputingLab/freegsnke.git", "external/freegsnke"),
 }
 REQUIRED_PATH_KEYS = (
-    "tokamark_root",
     "tokamind_root",
     "freegsnke_root",
-    "large_model_fusion_root",
-    "mast_data_dir",
 )
 IMPORT_CHECKS = {
     "mast_bridge": "mast_bridge",
-    "tokamark": "tokamark",
     "tokamind": "mmt",
     "freegsnke": "freegsnke",
 }
@@ -48,11 +43,8 @@ class WorkspaceLayout:
     workspace_root: Path
     mast_bridge_root: Path
     external_root: Path
-    tokamark_root: Path
     tokamind_root: Path
     freegsnke_root: Path
-    large_model_fusion_root: Path
-    mast_data_dir: Path
     data_root: Path
     runs_root: Path
     artifacts_root: Path
@@ -61,11 +53,8 @@ class WorkspaceLayout:
         return {
             "workspace_root": self.workspace_root,
             "external_root": self.external_root,
-            "tokamark_root": self.tokamark_root,
             "tokamind_root": self.tokamind_root,
             "freegsnke_root": self.freegsnke_root,
-            "large_model_fusion_root": self.large_model_fusion_root,
-            "mast_data_dir": self.mast_data_dir,
             "data_root": self.data_root,
             "runs_root": self.runs_root,
             "artifacts_root": self.artifacts_root,
@@ -100,19 +89,6 @@ def _repo_root(name: str, workspace_root: Path, external_root: Path) -> Path:
     )
 
 
-def _large_model_fusion_root(workspace_root: Path, external_root: Path) -> Path:
-    return _first_existing(
-        (
-            external_root / "LARGE_MODEL_FUSION",
-            external_root / "LARGE_MODEL_FUSION-master",
-            workspace_root / "LARGE_MODEL_FUSION",
-            workspace_root / "LARGE_MODEL_FUSION-master",
-            workspace_root / "data" / "LARGE_MODEL_FUSION-master",
-        ),
-        external_root / "LARGE_MODEL_FUSION",
-    )
-
-
 def discover_workspace(mast_bridge_root: str | Path | None = None) -> WorkspaceLayout:
     root = Path(mast_bridge_root or Path.cwd()).expanduser().resolve()
     if root.name != "mast-bridge" and (root / "mast-bridge").is_dir():
@@ -120,17 +96,13 @@ def discover_workspace(mast_bridge_root: str | Path | None = None) -> WorkspaceL
 
     workspace_root = root.parent.resolve()
     external_root = (workspace_root / "external").resolve()
-    large_model_fusion_root = _large_model_fusion_root(workspace_root, external_root)
 
     return WorkspaceLayout(
         workspace_root=workspace_root,
         mast_bridge_root=root,
         external_root=external_root,
-        tokamark_root=_repo_root("tokamark", workspace_root, external_root),
         tokamind_root=_repo_root("tokamind", workspace_root, external_root),
         freegsnke_root=_repo_root("freegsnke", workspace_root, external_root),
-        large_model_fusion_root=large_model_fusion_root,
-        mast_data_dir=(large_model_fusion_root / "mast_data").resolve(),
         data_root=(workspace_root / "data").resolve(),
         runs_root=(workspace_root / "runs").resolve(),
         artifacts_root=(workspace_root / "artifacts").resolve(),
@@ -156,7 +128,6 @@ def editable_install_commands(
     commands: list[list[str]] = []
     for path in (
         layout.mast_bridge_root,
-        layout.tokamark_root,
         layout.tokamind_root,
         layout.freegsnke_root,
     ):
@@ -221,9 +192,6 @@ def format_next_steps(
         if key in CLONE_URLS:
             url, target = CLONE_URLS[key]
             clone_lines.append(f"git clone {url} {target}")
-    if "large_model_fusion_root" in report.missing_paths:
-        clone_lines.append("Place LARGE_MODEL_FUSION under external/LARGE_MODEL_FUSION")
-
     if clone_lines:
         lines.extend(("Next clone/setup commands:", *clone_lines))
 

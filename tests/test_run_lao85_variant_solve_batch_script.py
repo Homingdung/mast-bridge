@@ -139,6 +139,85 @@ class RunLao85VariantSolveBatchScriptTests(unittest.TestCase):
         self.assertTrue(rejected_exists)
         self.assertEqual(accepted_rows[0]["sample_id"], "11771_t0.16_v000")
 
+    def test_existing_output_must_match_current_variant_and_solver_config(self):
+        row = {
+            "shot": "11771",
+            "target_time": "0.16",
+            "variant_id": "v000",
+            "sampling_method": "uniform_random",
+            "ip_scale": "1.0001",
+            "fvac_scale": "0.9999",
+            "alpha_scale": "1.0002",
+            "beta_scale": "0.9998",
+            "alpha_offset": "0.0001",
+            "beta_offset": "-0.0001",
+            "coil_current_scale": "1.0",
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            metadata = {
+                "parent_shot": "11771",
+                "target_time": 0.16,
+                "variant_id": "v000",
+                "sampling_method": "uniform_random",
+                "variant_row": {**row, "ip_scale": "1.02"},
+                "grid": {"nx": 65, "ny": 65},
+                "solver_requested_tolerance": 1e-8,
+                "solver_max_iterations": 500,
+            }
+            (output_dir / "metadata.json").write_text(json.dumps(metadata))
+
+            with self.assertRaisesRegex(ValueError, "ip_scale"):
+                MODULE.validate_existing_output(
+                    output_dir,
+                    row,
+                    nx=65,
+                    ny=65,
+                    tolerance=1e-8,
+                    max_iterations=500,
+                )
+
+    def test_failed_rerun_cannot_reuse_old_accepted_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            variant_csv = root / "variants.csv"
+            synthetic_root = root / "synthetic"
+            manifest_dir = root / "manifests"
+            self._write_variant_csv(variant_csv)
+            output_dir = synthetic_root / "11771_t0.16_v000"
+            output_dir.mkdir(parents=True)
+            np.savez_compressed(output_dir / "equilibrium.npz", psi=np.zeros((65, 65)))
+            (output_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "parent_shot": "11771",
+                        "solver_converged": True,
+                        "solver_final_tolerance": 9e-9,
+                    }
+                )
+            )
+            (output_dir / "diagnostics.npz").write_bytes(b"old")
+
+            exit_code = MODULE.main(
+                [
+                    "--variant-csv",
+                    str(variant_csv),
+                    "--synthetic-root",
+                    str(synthetic_root),
+                    "--manifest-dir",
+                    str(manifest_dir),
+                    "--prefix",
+                    "small",
+                    "--rerun-existing",
+                ],
+                run_command=lambda command: 1,
+            )
+
+            accepted = (manifest_dir / "small_synthetic_accepted.jsonl").read_text()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(accepted, "")
+
 
 if __name__ == "__main__":
     unittest.main()

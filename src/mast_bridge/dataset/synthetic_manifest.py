@@ -59,6 +59,7 @@ def synthetic_entries(
     root: str | Path,
     task: str | None = None,
     max_solver_tolerance: float = STRICT_SOLVER_TOLERANCE,
+    sample_ids: set[str] | None = None,
 ) -> list[ManifestEntry]:
     """Scan converged synthetic samples into manifest entries."""
     synthetic_root = Path(root).expanduser().resolve()
@@ -67,6 +68,8 @@ def synthetic_entries(
         return rows
 
     for sample_dir in sorted(path for path in synthetic_root.iterdir() if path.is_dir()):
+        if sample_ids is not None and sample_dir.name not in sample_ids:
+            continue
         metadata_path = sample_dir / "metadata.json"
         equilibrium_path = sample_dir / "equilibrium.npz"
         if not metadata_path.is_file() or not equilibrium_path.is_file():
@@ -103,6 +106,7 @@ def synthetic_entries(
 def rejected_samples(
     root: str | Path,
     max_solver_tolerance: float = STRICT_SOLVER_TOLERANCE,
+    sample_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Scan synthetic samples that are excluded from the strict manifest."""
     synthetic_root = Path(root).expanduser().resolve()
@@ -111,6 +115,8 @@ def rejected_samples(
         return rows
 
     for sample_dir in sorted(path for path in synthetic_root.iterdir() if path.is_dir()):
+        if sample_ids is not None and sample_dir.name not in sample_ids:
+            continue
         metadata_path = sample_dir / "metadata.json"
         equilibrium_path = sample_dir / "equilibrium.npz"
         if not metadata_path.is_file():

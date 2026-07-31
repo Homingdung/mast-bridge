@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -126,12 +127,86 @@ def enrich_metadata(output_dir: Path, row: dict[str, str], command: list[str]) -
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 
+def validate_existing_output(
+    output_dir: Path,
+    row: dict[str, str],
+    *,
+    nx: int,
+    ny: int,
+    tolerance: float,
+    max_iterations: int,
+) -> None:
+    metadata_path = output_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    expected_text = {
+        "parent_shot": row["shot"],
+        "variant_id": row["variant_id"],
+        "sampling_method": row["sampling_method"],
+    }
+    for key, expected in expected_text.items():
+        if str(metadata.get(key)) != str(expected):
+            raise ValueError(f"existing sample {output_dir.name} has mismatched {key}")
+
+    variant_row = metadata.get("variant_row")
+    if not isinstance(variant_row, dict):
+        raise ValueError(f"existing sample {output_dir.name} has no variant_row identity")
+    numeric_fields = (
+        "target_time",
+        "ip_scale",
+        "fvac_scale",
+        "alpha_scale",
+        "beta_scale",
+        "alpha_offset",
+        "beta_offset",
+        "coil_current_scale",
+    )
+    for key in numeric_fields:
+        try:
+            actual = float(variant_row[key])
+            expected = float(row[key])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"existing sample {output_dir.name} has invalid {key}"
+            ) from exc
+        if not math.isclose(actual, expected, rel_tol=1e-12, abs_tol=1e-15):
+            raise ValueError(f"existing sample {output_dir.name} has mismatched {key}")
+
+    grid = metadata.get("grid", {})
+    checks = {
+        "nx": (grid.get("nx"), nx),
+        "ny": (grid.get("ny"), ny),
+        "solver_requested_tolerance": (
+            metadata.get("solver_requested_tolerance"),
+            tolerance,
+        ),
+        "solver_max_iterations": (
+            metadata.get("solver_max_iterations"),
+            max_iterations,
+        ),
+    }
+    for key, (actual, expected) in checks.items():
+        if actual is None or not math.isclose(
+            float(actual), float(expected), rel_tol=1e-12, abs_tol=1e-15
+        ):
+            raise ValueError(f"existing sample {output_dir.name} has mismatched {key}")
+
+
 def write_batch_report(path: Path, rows: list[dict[str, str]]) -> None:
     output = path.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def clear_generated_sample_outputs(output_dir: Path) -> None:
+    for filename in (
+        "equilibrium.npz",
+        "metadata.json",
+        "diagnostics.npz",
+        "equilibrium.png",
+    ):
+        (output_dir / filename).unlink(missing_ok=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -241,12 +316,29 @@ def main(
             and (output_dir / "equilibrium.npz").is_file()
             and (output_dir / "metadata.json").is_file()
         ):
+            validate_existing_output(
+                output_dir,
+                row,
+                nx=args.nx,
+                ny=args.ny,
+                tolerance=args.tolerance,
+                max_iterations=args.max_iterations,
+            )
             print(f"[skip] row={row_index} sample={sample_id} existing output", flush=True)
             report_rows.append(
-                {**row, "row_index": str(row_index), "sample_id": sample_id, "batch_status": "skipped_existing"}
+                {
+                    **row,
+                    "row_index": str(row_index),
+                    "sample_id": sample_id,
+                    "output_dir": str(output_dir),
+                    "batch_status": "solved",
+                    "return_code": "0",
+                }
             )
             write_batch_report(report_path, report_rows)
             continue
+        if args.rerun_existing:
+            clear_generated_sample_outputs(output_dir)
 
         print(
             f"[solve-start] row={row_index} sample={sample_id} "
@@ -285,6 +377,8 @@ def main(
             [
                 "--synthetic-root",
                 str(synthetic_root),
+                "--variant-csv",
+                str(args.variant_csv.expanduser().resolve()),
                 "--output",
                 str(manifest_dir / f"{args.prefix}_synthetic_accepted.jsonl"),
                 "--rejected-output",

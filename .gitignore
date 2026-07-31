@@ -29,3 +29,12 @@ configs/*
 !configs/diagnostic_features/
 configs/diagnostic_features/*
 !configs/diagnostic_features/mast_level2_common_94.json
+!configs/shot_lists/
+configs/shot_lists/*
+!configs/shot_lists/mast_small_13.txt
+!configs/time_grids/
+configs/time_grids/*
+!configs/time_grids/baseline_times.txt
+!configs/reproduction/
+configs/reproduction/*
+!configs/reproduction/mast_small_13.env

@@ -5,7 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from mast_bridge.mast.downloader import build_download_command
+from mast_bridge.mast.downloader import (
+    REQUIRED_SHOT_GROUPS,
+    build_download_command,
+    download_complete_marker,
+    downloaded_shot_is_complete,
+)
 from mast_bridge.mast.machine_config import REQUIRED_MACHINE_FILES, MachineConfigurationError
 from mast_bridge.mast.reader import ShotReader
 
@@ -69,12 +74,42 @@ class ShotReaderTests(unittest.TestCase):
 class DownloadCommandTests(unittest.TestCase):
     def test_builds_one_command_per_selected_shot(self):
         commands = build_download_command(
-            script_path=Path("external/LARGE_MODEL_FUSION-master/scripts/download/download_data_v2.py"),
             shot_ids=["11766", "11767"],
             data_dir=Path("data/raw/mast"),
-            python="python3",
+            s5cmd="s5cmd",
         )
 
         self.assertEqual(len(commands), 2)
-        self.assertEqual(commands[0][-2:], ["--shot", "11766"])
-        self.assertTrue(commands[1][3].endswith("data/raw/mast"))
+        self.assertEqual(
+            commands[0],
+            [
+                "s5cmd",
+                "--no-sign-request",
+                "--endpoint-url",
+                "https://s3.echo.stfc.ac.uk",
+                "cp",
+                "s3://mast/level2/shots/11766.zarr/**",
+                str((Path("data/raw/mast") / "11766.zarr").resolve()),
+            ],
+        )
+        self.assertTrue(commands[1][-1].endswith("data/raw/mast/11767.zarr"))
+
+    def test_download_is_complete_only_when_required_zarr_groups_exist(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            missing = root / "missing.zarr"
+            empty = root / "empty.zarr"
+            partial = root / "partial.zarr"
+            complete = root / "complete.zarr"
+            empty.mkdir()
+            (partial / "equilibrium").mkdir(parents=True)
+            for group in REQUIRED_SHOT_GROUPS:
+                (complete / group).mkdir(parents=True)
+                (complete / group / "zarr.json").write_text("{}")
+
+            self.assertFalse(downloaded_shot_is_complete(missing))
+            self.assertFalse(downloaded_shot_is_complete(empty))
+            self.assertFalse(downloaded_shot_is_complete(partial))
+            self.assertFalse(downloaded_shot_is_complete(complete))
+            download_complete_marker(complete).write_text("complete\n")
+            self.assertTrue(downloaded_shot_is_complete(complete))

@@ -1,6 +1,6 @@
 # mast-bridge
 
-`mast-bridge` 把 MAST Level 2 Zarr 数据转换成 FreeGSNKE 可用输入，并以真实 shot 为父样本批量生成 synthetic equilibrium 数据，用于后续 Tokamind/Tokamark 对比实验。
+`mast-bridge` 把 MAST Level 2 Zarr 数据转换成 FreeGSNKE 可用输入，并以真实 shot 为父样本批量生成 synthetic equilibrium 数据，用于后续 TokaMind 对比实验。
 
 主流程：
 
@@ -38,16 +38,25 @@ download MAST Level 2
 mkdir fusion-workspace
 cd fusion-workspace
 
-git clone git@github.com:Homingdung/mast-bridge.git mast-bridge
+git clone https://github.com/Homingdung/mast-bridge.git mast-bridge
 
 mkdir external
-git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/LARGE_MODEL_FUSION.git external/LARGE_MODEL_FUSION
 git clone https://github.com/FusionComputingLab/freegsnke.git external/freegsnke
-git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamark.git external/tokamark
 git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git external/tokamind
 ```
 
-如果 `LARGE_MODEL_FUSION` 仓库实际以 `LARGE_MODEL_FUSION-master` 目录存在，当前下载脚本也兼容；推荐新 workspace 使用 `external/LARGE_MODEL_FUSION`。
+当前流水线不依赖 `LARGE_MODEL_FUSION`。`scripts/download_mast_shots.py` 直接通过
+`s5cmd` 从 STFC Echo 下载指定 MAST Level 2 shot。`tokamark` 只作为方法参考，
+运行本 README 的数据和训练流程不需要安装。
+
+切换到本实验验证过的外部 revision：
+
+```bash
+cd mast-bridge
+source configs/reproduction/mast_small_13.env
+git -C ../external/freegsnke checkout "$FREEGSNKE_REV"
+git -C ../external/tokamind checkout "$TOKAMIND_REV"
+```
 
 推荐目录：
 
@@ -58,9 +67,7 @@ fusion-workspace/
 │       ├── shot_lists/
 │       └── time_grids/
 ├── external/
-│   ├── LARGE_MODEL_FUSION/
 │   ├── freegsnke/
-│   ├── tokamark/
 │   └── tokamind/
 ├── data/
 │   ├── raw/mast/
@@ -74,7 +81,6 @@ fusion-workspace/
 初始化路径配置：
 
 ```bash
-cd fusion-workspace/mast-bridge
 python3 scripts/bootstrap_workspace.py --write-config
 ```
 
@@ -82,26 +88,35 @@ python3 scripts/bootstrap_workspace.py --write-config
 
 ## 2. Python 环境
 
-三个阶段使用三个独立环境，避免 FreeGSNKE 依赖污染下载和数据处理阶段。建议 Python 3.12。
+四个阶段使用四个独立环境，避免 FreeGSNKE 依赖污染下载、数据处理和训练阶段。本文
+结果使用 Python 3.12.13。
+以下命令均从 `fusion-workspace/mast-bridge`（仓库根目录）运行。
 
 ### 2.1 mast-download 下载环境
 
-用于调用 `LARGE_MODEL_FUSION` 下载脚本：
+用于调用 `s5cmd` 下载 MAST Level 2 Zarr。`s5cmd` 是独立可执行文件，不是 Python
+包。macOS Homebrew 安装：
 
 ```bash
-cd fusion-workspace/mast-bridge
+brew install peak/tap/s5cmd
+```
+
+Linux 可从 `https://github.com/peak/s5cmd/releases` 安装官方预编译文件。当前测试
+版本为 `s5cmd v2.3.0`。
+
+```bash
 python3.12 -m venv .mast-download-env
 source .mast-download-env/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e . --no-deps
-python -m pip install s3fs xarray zarr
 ```
 
 确认：
 
 ```bash
 python scripts/doctor.py --skip-imports
-s5cmd --version
+s5cmd version
+python scripts/download_mast_shots.py --shot 11766 --dry-run
 ```
 
 ### 2.2 mast-process 数据处理环境
@@ -109,12 +124,16 @@ s5cmd --version
 用于读取 Zarr、生成 machine pickles、生成 Lao/EFIT NPZ。不导入 FreeGSNKE：
 
 ```bash
-cd fusion-workspace/mast-bridge
 python3.12 -m venv .mast-process-env
 source .mast-process-env/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e . --no-deps
-python -m pip install numpy "zarr>=3,<4" xarray scipy matplotlib
+python -m pip install \
+  "numpy==2.5.1" \
+  "zarr==3.2.1" \
+  "xarray==2026.7.0" \
+  "scipy==1.18.0" \
+  "matplotlib==3.11.1"
 ```
 
 确认：
@@ -133,7 +152,6 @@ python -m py_compile \
 用于 FreeGSNKE forward solve：
 
 ```bash
-cd fusion-workspace/mast-bridge
 python3.12 -m venv .freegsnke-solve-env
 source .freegsnke-solve-env/bin/activate
 python -m pip install --upgrade pip setuptools wheel
@@ -142,10 +160,10 @@ python -m pip install -e "../external/freegsnke[freegs4e]"
 
 # Downloaded MAST stores are Zarr 3. Override FreeGSNKE's older pins after install.
 python -m pip install --force-reinstall --no-deps \
-  "numpy>=2.0,<2.3" \
+  "numpy==2.2.6" \
   "scipy==1.15.3" \
-  "zarr>=3,<4"
-python -m pip install "donfig>=0.8" "google-crc32c>=1.5"
+  "zarr==3.2.1"
+python -m pip install "donfig==0.8.1.post1" "google-crc32c==1.8.0"
 ```
 
 确认：
@@ -171,18 +189,25 @@ PY
 训练阶段使用独立环境，放在 `mast-bridge/` 目录下：
 
 ```bash
-cd fusion-workspace/mast-bridge
 python3.12 -m venv .tokamind-train-env
 source .tokamind-train-env/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 
-# 按你的机器和网络选择 CPU / CUDA / MPS 对应的 PyTorch 安装方式。
-# macOS Apple Silicon 常用:
-python -m pip install torch torchvision torchaudio
+# 本文结果在 macOS Apple Silicon 上使用该版本；CUDA 主机按 PyTorch 官方说明
+# 安装同一 torch 版本对应的 wheel。
+python -m pip install "torch==2.13.0"
 
 python -m pip install -e . --no-deps
-python -m pip install -e ../external/tokamind
-python -m pip install numpy "zarr>=3,<4" xarray scipy pyyaml tqdm "psutil>=7.2"
+python -m pip install -e ../external/tokamind --no-deps
+python -m pip install \
+  "numpy==2.5.1" \
+  "zarr==3.2.1" \
+  "xarray==2026.7.0" \
+  "scipy==1.18.0" \
+  "matplotlib==3.11.1" \
+  "pyyaml==6.0.3" \
+  "tqdm==4.70.0" \
+  "psutil==7.2.2"
 ```
 
 确认：
@@ -204,67 +229,42 @@ PY
 
 ## 3. 配置运行规模
 
-所有规模都由 shot list、time grid 和路径变量控制。同一套命令可以先本地 smoke test，再放到服务器跑 full run。
+复现本文记录的 13 炮实验时，不要自行修改 shot 或求解参数。加载已提交的配置：
 
-推荐三档：
+```bash
+source configs/reproduction/mast_small_13.env
+cat "$SHOT_LIST"
+```
+
+该配置固定：
 
 ```text
-local_smoke   2-4 shots, each 2-3 times
-local_dev     10-20 shots, each 5 times
-server_full   200-2000 shots, each 5-20 times
+13 shots
+uniform_random
+2 variants per fitted shot/time
+seed = 20260729
+time window = [0.12, 0.24] s
+grid = 65 x 65
+solver tolerance = 1e-8
+max iterations = 500
 ```
 
-本地 smoke 配置：
-
-```bash
-mkdir -p configs/shot_lists configs/time_grids
-
-cat > configs/shot_lists/local_smoke.txt <<'EOF'
-11771
-11772
-11773
-EOF
-
-cat > configs/time_grids/smoke_times.txt <<'EOF'
-0.16
-0.20
-EOF
-```
-
-本地变量：
-
-```bash
-SHOT_LIST=configs/shot_lists/local_smoke.txt
-ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
-TIME_GRID=configs/time_grids/smoke_times.txt
-DATA_DIR=../data/raw/mast
-FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-SYNTH_DIR=../data/processed/synthetic
-```
-
-服务器只替换变量，例如：
-
-```bash
-SHOT_LIST=configs/shot_lists/server_full.txt
-ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
-TIME_GRID=configs/time_grids/full_times.txt
-DATA_DIR=/data/mast/raw
-FIT_PATH=/data/mast/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-SYNTH_DIR=/data/mast/processed/synthetic
-```
+可以另外创建 2-4 炮的 smoke 配置检查环境，但这种自定义数据集不能复现本文的
+`624/219/171/390` 计数，也不能直接使用固定的 validation shots 和评估结果。smoke
+运行必须使用独立的 `VARIANT_CSV`、`SYNTH_DIR`、`MANIFEST_DIR/PREFIX` 和 run
+directory，不能写入本节正式路径。
 
 ## 4. 批处理流程
 
-按本节顺序运行。不要跳过 `ACTIVE_SHOT_LIST`，它用于过滤下载失败或远端不存在的 shot。
+按本节顺序运行。正式复现要求 13 炮全部下载成功；缺少任一炮时应停止，不要用较小的
+`ACTIVE_SHOT_LIST` 继续并声称复现了本文结果。
 
 ### 4.1 下载数据
 
 ```bash
 source .mast-download-env/bin/activate
-
-SHOT_LIST=configs/shot_lists/local_smoke.txt
-ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
-DATA_DIR=../data/raw/mast
+source configs/reproduction/mast_small_13.env
+set -euo pipefail
 ```
 
 先检查命令：
@@ -279,45 +279,37 @@ while read shot; do
 done < "$SHOT_LIST"
 ```
 
-下载：
+下载并生成实际可处理列表。下载器会检查 `s5cmd` 返回码，并要求每个 `<shot>.zarr`
+至少包含 `equilibrium`、`magnetics`、`pf_active`、`pf_passive` 和 `wall` 的 Zarr
+metadata。只有命令成功后才写入同目录的
+`.<shot>.zarr.mast-bridge-complete` 标记；中断下载没有标记，重新运行时不会被跳过：
 
 ```bash
+set -euo pipefail
+: > "$ACTIVE_SHOT_LIST"
 while read shot; do
   [ -z "$shot" ] && continue
   python scripts/download_mast_shots.py \
     --data-dir "$DATA_DIR" \
-    --shot "$shot"
+    --shot "$shot" >&2
+  echo "$shot" >> "$ACTIVE_SHOT_LIST"
 done < "$SHOT_LIST"
+
+if ! cmp -s "$SHOT_LIST" "$ACTIVE_SHOT_LIST"; then
+  echo "The 13-shot download is incomplete; stop before processing." >&2
+  diff -u "$SHOT_LIST" "$ACTIVE_SHOT_LIST" || true
+  exit 1
+fi
 ```
 
-生成实际可处理列表：
-
-```bash
-while read shot; do
-  [ -z "$shot" ] && continue
-  if [ -d "$DATA_DIR/${shot}.zarr" ]; then
-    echo "$shot"
-  else
-    echo "Missing downloaded shot: $shot" >&2
-  fi
-done < "$SHOT_LIST" > "$ACTIVE_SHOT_LIST"
-```
-
-从这里开始，后续所有 `while read shot` 都使用：
-
-```bash
-done < "$ACTIVE_SHOT_LIST"
-```
-
-不要继续使用原始 `$SHOT_LIST`。
+从这里开始，后续所有 `while read shot` 都以
+`done < "$ACTIVE_SHOT_LIST"` 结束，不要继续使用原始 `$SHOT_LIST`。
 
 ### 4.2 生成 Machine Pickle
 
 ```bash
 source .mast-process-env/bin/activate
-
-ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
-DATA_DIR=../data/raw/mast
+source configs/reproduction/mast_small_13.env
 ```
 
 生成 machine pickles：
@@ -381,10 +373,7 @@ data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
 
 ```bash
 source .mast-process-env/bin/activate
-
-ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
-DATA_DIR=../data/raw/mast
-FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+source configs/reproduction/mast_small_13.env
 
 python scripts/build_lao_fit_npz.py \
   --shot-list "$ACTIVE_SHOT_LIST" \
@@ -427,12 +416,9 @@ freegsnke_beta
 
 ```bash
 source .freegsnke-solve-env/bin/activate
-
-ACTIVE_SHOT_LIST=configs/shot_lists/downloaded_success.txt
-TIME_GRID=configs/time_grids/smoke_times.txt
-DATA_DIR=../data/raw/mast
-FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-SYNTH_DIR=../data/processed/synthetic
+source configs/reproduction/mast_small_13.env
+TIME_GRID=configs/time_grids/baseline_times.txt
+BASELINE_SYNTH_DIR=../data/processed/synthetic_baseline
 ```
 
 注意：这一节是可选的 baseline solve，用来检查某个真实 `(shot,time)` 在未扰动
@@ -465,7 +451,7 @@ while read shot; do
   fi
   while read time; do
     [ -z "$time" ] && continue
-    output_dir="$SYNTH_DIR/${shot}_t${time}"
+    output_dir="$BASELINE_SYNTH_DIR/${shot}_t${time}"
     if [ -f "$output_dir/equilibrium.npz" ] && [ -f "$output_dir/metadata.json" ]; then
       echo "Skipping existing sample: ${shot}_t${time}"
       continue
@@ -485,10 +471,10 @@ while read shot; do
 done < "$ACTIVE_SHOT_LIST"
 ```
 
-每个 synthetic 样本输出：
+每个 baseline synthetic 样本输出：
 
 ```text
-data/processed/synthetic/<shot>_t<time>/
+data/processed/synthetic_baseline/<shot>_t<time>/
 ├── equilibrium.npz
 ├── metadata.json
 └── equilibrium.png
@@ -569,15 +555,15 @@ Gaussian、Latin Hypercube 或基于基准收敛性的预筛选采样，只需�
 从拟合 NPZ 生成采样任务 CSV：
 
 ```bash
-FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-VARIANT_CSV=../data/manifests/lao85_uniform_small_variants.csv
+source .freegsnke-solve-env/bin/activate
+source configs/reproduction/mast_small_13.env
 
 python scripts/build_lao85_variant_rows.py \
   --fit-path "$FIT_PATH" \
-  --variants-per-point 2 \
-  --seed 20260729 \
-  --min-time 0.12 \
-  --max-time 0.24 \
+  --variants-per-point "$VARIANTS_PER_POINT" \
+  --seed "$SAMPLING_SEED" \
+  --min-time "$MIN_TIME" \
+  --max-time "$MAX_TIME" \
   --output "$VARIANT_CSV"
 ```
 
@@ -598,30 +584,29 @@ ip_scale,fvac_scale,alpha_scale,beta_scale,alpha_offset,beta_offset,coil_current
 
 ```bash
 source .freegsnke-solve-env/bin/activate
-
-VARIANT_CSV=../data/manifests/lao85_uniform_small_variants.csv
-SYNTH_DIR=../data/processed/synthetic_lao85_uniform_small_iter500
-MANIFEST_DIR=../data/manifests
+source configs/reproduction/mast_small_13.env
 
 python scripts/run_lao85_variant_solve_batch.py \
   --variant-csv "$VARIANT_CSV" \
-  --data-dir ../data/raw/mast \
-  --fit-path ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz \
+  --data-dir "$DATA_DIR" \
+  --fit-path "$FIT_PATH" \
   --synthetic-root "$SYNTH_DIR" \
   --manifest-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_small_iter500 \
+  --prefix "$PREFIX" \
   --task task_1-3 \
-  --nx 65 \
-  --ny 65 \
-  --tolerance 1e-8 \
-  --max-solver-tolerance 1e-8 \
-  --max-iterations 500 \
-  --limit 20
+  --nx "$NX" \
+  --ny "$NY" \
+  --tolerance "$SOLVER_TOLERANCE" \
+  --max-solver-tolerance "$SOLVER_TOLERANCE" \
+  --max-iterations "$MAX_SOLVER_ITERATIONS"
 ```
 
-`--limit 20` 用于先跑一个小批量确认环境和收敛筛选；确认后删除该参数即可继续跑
-CSV 中剩余样本。脚本默认跳过已经存在 `equilibrium.npz` 和 `metadata.json` 的样本；
-如果需要覆盖重跑，显式加 `--rerun-existing`。
+正式复现命令不带 `--limit`，会处理 CSV 全部 624 行。smoke 检查只使用
+`--limit 20 --dry-run` 查看命令，不要在正式 `SYNTH_DIR/PREFIX` 中先实际求解 20 行。
+脚本仅跳过 metadata 中 variant 参数、网格、容差和最大迭代数都与当前 CSV/命令一致的
+已有结果；不一致会直接报错，避免静默混入旧 seed 或旧求解配置。需要重算时显式加
+`--rerun-existing`，该模式会先删除该样本已有的 equilibrium、metadata、diagnostics
+和 QC 图；即使新求解失败，旧结果也不会重新进入 accepted manifest。
 
 注意：正式筛选建议使用 `--max-iterations 500`，不要继续沿用早期 smoke run 的
 `100`。部分 accepted 样本需要超过 100 次迭代才达到 `1e-8`；如果只允许 100 次，
@@ -638,7 +623,7 @@ CSV 中剩余样本。脚本默认跳过已经存在 `equilibrium.npz` 和 `meta
 会在每个样本结束后实时更新 batch report，可以另开一个终端查看：
 
 ```bash
-tail -f ../data/manifests/tokamark_lao85_uniform_small_iter500_batch_report.jsonl
+tail -f "$MANIFEST_DIR/${PREFIX}_batch_report.jsonl"
 ```
 
 该脚本会写出：
@@ -653,6 +638,9 @@ data/manifests/tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl
 `batch_report.jsonl` 记录每个采样 row 的执行状态；accepted/rejected manifest 由
 同一个脚本在求解结束后调用 `scripts/build_synthetic_manifest.py` 生成。训练时只使用
 `*_synthetic_accepted.jsonl`，不要把 rejected 样本并入训练。
+过滤器只处理当前 `VARIANT_CSV` 中的 sample ID，即使 `SYNTH_DIR` 中存在其他旧目录也
+不会并入正式 manifest。当前 624 行中有 616 个进程正常产出 equilibrium：
+`219 accepted + 397 rejected = 616`；另外 8 个进程失败只记录在 batch report。
 
 注意：`coil_current_scale` 会同步作用到 active 和 passive coil currents，并写入
 `metadata.json` 的 `coil_currents`。早期已经生成的 synthetic 数据如果 metadata
@@ -685,7 +673,7 @@ synthetic sample:
 过滤过程写在 `src/mast_bridge/dataset/synthetic_manifest.py`，核心函数是
 `rejection_reason()`、`synthetic_entries()` 和 `rejected_samples()`。执行流程是：
 
-1. 扫描 `--synthetic-root` 下每个 synthetic sample 目录。
+1. 扫描 `--synthetic-root` 下、且列在 `--variant-csv` 中的 synthetic sample 目录。
 2. 检查是否同时存在 `metadata.json` 和 `equilibrium.npz`。
 3. 读取 `metadata.json` 中 FreeGSNKE 写出的求解状态。
 4. 若 `solver_converged` 不是 `true`，样本进入 rejected，原因是
@@ -711,17 +699,16 @@ FreeGSNKE，只会重新扫描已有 `metadata.json` 和 `equilibrium.npz`。
 
 ```bash
 source .freegsnke-solve-env/bin/activate
-
-SYNTH_DIR=../data/processed/synthetic_lao85_uniform_small_iter500
-MANIFEST_DIR=../data/manifests
+source configs/reproduction/mast_small_13.env
 mkdir -p "$MANIFEST_DIR"
 
 python scripts/build_synthetic_manifest.py \
   --synthetic-root "$SYNTH_DIR" \
-  --output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
-  --rejected-output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl" \
+  --variant-csv "$VARIANT_CSV" \
+  --output "$MANIFEST_DIR/${PREFIX}_synthetic_accepted.jsonl" \
+  --rejected-output "$MANIFEST_DIR/${PREFIX}_synthetic_rejected.jsonl" \
   --task task_1-3 \
-  --max-solver-tolerance 1e-8
+  --max-solver-tolerance "$SOLVER_TOLERANCE"
 ```
 
 输出：
@@ -747,13 +734,12 @@ Lao85 参数重建最终 equilibrium 状态，再调用 FreeGSNKE 官方 probe c
 
 ```bash
 source .freegsnke-solve-env/bin/activate
-
-MANIFEST_DIR=../data/manifests
+source configs/reproduction/mast_small_13.env
 
 python scripts/build_synthetic_magnetic_diagnostics.py \
-  --accepted-manifest "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
-  --data-dir ../data/raw/mast \
-  --report "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_diagnostics_report.jsonl"
+  --accepted-manifest "$MANIFEST_DIR/${PREFIX}_synthetic_accepted.jsonl" \
+  --data-dir "$DATA_DIR" \
+  --report "$MANIFEST_DIR/${PREFIX}_diagnostics_report.jsonl"
 ```
 
 脚本默认跳过已经存在且通过校验的 `diagnostics.npz`，可以直接断点续跑。若要覆盖重算，
@@ -780,15 +766,12 @@ pickup 使用修正后的 CCBV/OBR/OBV 方向。文件校验会拒绝缺字段�
 `shot/time`，构建真实、仿真和混合三组 manifest：
 
 ```bash
-DATA_DIR=../data/raw/mast
-FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-
 python scripts/build_experiment_manifests.py \
-  --accepted-synthetic "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
+  --accepted-synthetic "$MANIFEST_DIR/${PREFIX}_synthetic_accepted.jsonl" \
   --raw-data-dir "$DATA_DIR" \
   --fit-path "$FIT_PATH" \
   --output-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_small_iter500_diagnostics \
+  --prefix "${PREFIX}_diagnostics" \
   --task task_1-3 \
   --require-synthetic-diagnostics
 ```
@@ -821,131 +804,20 @@ real manifest 的 `label_source` 是 `zarr_equilibrium_psi`，真实标签直接
 
 ## 5. 当前 uniform_iter500 复现流程
 
-这一节给出当前实际使用的
-`uniform_random + 2 variants + max_iterations=500 + strict 1e-8 filter` 小规模流程。
+当前正式复现顺序只有一条：
 
-从项目目录运行：
+1. 按第 1-2 节创建 workspace、固定外部 revision 并安装四个环境。
+2. `source configs/reproduction/mast_small_13.env`。
+3. 严格按 4.1-4.3 下载 13 炮、生成 machine 和 Lao fit。
+4. 4.4 只用于可选 baseline；正式增强直接运行 4.5。
+5. 按 4.6 严格过滤，再按 4.7 生成 diagnostics 和三组 manifest。
+6. 按第 8 节 dry-run、训练三组模型并统一评估。
 
-```bash
-cd /Users/mingdonghe/pj/fusion-workspace/mast-bridge
-source .freegsnke-solve-env/bin/activate
-```
-
-确认已有输入：
-
-```text
-../data/raw/mast/<shot>.zarr
-../data/raw/mast/machine/<shot>/
-../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-```
-
-machine 目录里的标准文件名应包含：
+阶段计数应为：
 
 ```text
-MAST_active_coils.pickle
-MAST_limiter.pickle
-MAST_magentic_probes.pickle
-MAST_passive_coils.pickle
-MAST_wall.pickle
-```
-
-旧文件名 `MAST_passive_coilds.pickle` 是历史 typo，只作为兼容读取 fallback；
-新生成的数据应使用 `MAST_passive_coils.pickle`。
-
-生成 Lao85 uniform 随机扰动表。当前时间窗是 `0.12-0.24 s`，每个拟合
-`shot/time` 生成 2 个 variants：
-
-```bash
-FIT_PATH=../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-VARIANT_CSV=../data/manifests/lao85_uniform_small_variants.csv
-
-python scripts/build_lao85_variant_rows.py \
-  --fit-path "$FIT_PATH" \
-  --variants-per-point 2 \
-  --seed 20260729 \
-  --min-time 0.12 \
-  --max-time 0.24 \
-  --output "$VARIANT_CSV"
-```
-
-批量运行 FreeGSNKE 正问题求解：
-
-```bash
-SYNTH_DIR=../data/processed/synthetic_lao85_uniform_small_iter500
-MANIFEST_DIR=../data/manifests
-
-python scripts/run_lao85_variant_solve_batch.py \
-  --variant-csv "$VARIANT_CSV" \
-  --data-dir ../data/raw/mast \
-  --fit-path "$FIT_PATH" \
-  --synthetic-root "$SYNTH_DIR" \
-  --manifest-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_small_iter500 \
-  --task task_1-3 \
-  --nx 65 \
-  --ny 65 \
-  --tolerance 1e-8 \
-  --max-solver-tolerance 1e-8 \
-  --max-iterations 500
-```
-
-这里推荐 `--max-iterations 500`。之前使用 `100` 时，有些样本还没达到
-`1e-8` 就停止；这些样本会被 strict filter 拒绝。脚本会跳过已经同时包含
-`equilibrium.npz` 和 `metadata.json` 的样本，所以中断后可以直接重跑。
-
-查看批处理进度：
-
-```bash
-tail -f ../data/manifests/tokamark_lao85_uniform_small_iter500_batch_report.jsonl
-```
-
-重新扫描已有求解结果并生成严格过滤 manifest：
-
-```bash
-python scripts/build_synthetic_manifest.py \
-  --synthetic-root "$SYNTH_DIR" \
-  --output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
-  --rejected-output "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl" \
-  --task task_1-3 \
-  --max-solver-tolerance 1e-8
-```
-
-只有 `*_synthetic_accepted.jsonl` 进入后续数据集构建。筛选条件是
-`metadata.json` 中 `solver_converged=true`，且 `solver_final_tolerance <= 1e-8`。
-
-为 accepted 样本补算 diagnostics，不重新运行 GS solver：
-
-```bash
-python scripts/build_synthetic_magnetic_diagnostics.py \
-  --accepted-manifest "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
-  --data-dir ../data/raw/mast \
-  --report "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_diagnostics_report.jsonl"
-```
-
-构建 diagnostics 输入的三组对比实验 manifest：
-
-```bash
-python scripts/build_experiment_manifests.py \
-  --accepted-synthetic "$MANIFEST_DIR/tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl" \
-  --raw-data-dir ../data/raw/mast \
-  --fit-path "$FIT_PATH" \
-  --output-dir "$MANIFEST_DIR" \
-  --prefix tokamark_lao85_uniform_small_iter500_diagnostics \
-  --task task_1-3 \
-  --require-synthetic-diagnostics
-```
-
-输出：
-
-```text
-../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl
-../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl
-../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
-```
-
-当前本地计数：
-
-```text
+downloaded Zarr shots:                   13
+Lao fit rows:                           752
 variant rows / batch attempts:          624
 FreeGSNKE process solved:               616
 FreeGSNKE process failed:                 8
@@ -956,6 +828,30 @@ diagnostics real-only:                  171
 diagnostics synthetic-only:             219
 diagnostics real-plus-synthetic:        390
 ```
+
+检查命令：
+
+```bash
+source .mast-process-env/bin/activate
+source configs/reproduction/mast_small_13.env
+
+cmp "$SHOT_LIST" "$ACTIVE_SHOT_LIST"
+wc -l "$ACTIVE_SHOT_LIST"
+python -c 'import numpy as np; print(len(np.load("'"$FIT_PATH"'")["shot"]))'
+test "$(($(wc -l < "$VARIANT_CSV") - 1))" -eq 624
+python -c 'import collections,json,sys; print(collections.Counter(json.loads(x)["batch_status"] for x in open(sys.argv[1])))' \
+  "$MANIFEST_DIR/${PREFIX}_batch_report.jsonl"
+wc -l \
+  "$MANIFEST_DIR/${PREFIX}_synthetic_accepted.jsonl" \
+  "$MANIFEST_DIR/${PREFIX}_synthetic_rejected.jsonl" \
+  "$MANIFEST_DIR/${PREFIX}_diagnostics_real_only.jsonl" \
+  "$MANIFEST_DIR/${PREFIX}_diagnostics_synthetic_only.jsonl" \
+  "$MANIFEST_DIR/${PREFIX}_diagnostics_real_plus_synthetic.jsonl"
+```
+
+如果计数不同，不要直接进入训练。先检查下载完整性、外部 revision、variant CSV、
+batch report 和 rejected reason。不同硬件上的浮点细节可能影响接近 `1e-8` 边界的
+个别 FreeGSNKE 样本，因此应同时记录实际 accepted/rejected 数量。
 
 ## 6. 单个 Shot 命令
 
@@ -1233,8 +1129,9 @@ Lao 参数任务。
 
 ```bash
 source .tokamind-train-env/bin/activate
+source configs/reproduction/mast_small_13.env
 
-COMMON=../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
+COMMON="$MANIFEST_DIR/${PREFIX}_diagnostics_real_plus_synthetic.jsonl"
 FEATURE_SCHEMA=configs/diagnostic_features/mast_level2_common_94.json
 
 python scripts/train_tokamind_diagnostics.py \
@@ -1259,17 +1156,20 @@ target_mode: raw-psi
 三组对比训练：
 
 ```bash
-COMMON=../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
+source configs/reproduction/mast_small_13.env
+REAL="$MANIFEST_DIR/${PREFIX}_diagnostics_real_only.jsonl"
+SYNTHETIC="$MANIFEST_DIR/${PREFIX}_diagnostics_synthetic_only.jsonl"
+COMMON="$MANIFEST_DIR/${PREFIX}_diagnostics_real_plus_synthetic.jsonl"
 FEATURE_SCHEMA=configs/diagnostic_features/mast_level2_common_94.json
 
 python scripts/train_tokamind_diagnostics.py \
-  --manifest ../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl \
+  --manifest "$REAL" \
   --feature-schema "$FEATURE_SCHEMA" \
   --run-dir ../runs/tokamind-diagnostics-real-only \
   --epochs 50 --batch-size 8 --lr 1e-4
 
 python scripts/train_tokamind_diagnostics.py \
-  --manifest ../data/manifests/tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl \
+  --manifest "$SYNTHETIC" \
   --feature-schema "$FEATURE_SCHEMA" \
   --run-dir ../runs/tokamind-diagnostics-synthetic-only \
   --epochs 50 --batch-size 8 --lr 1e-4
@@ -1279,6 +1179,8 @@ python scripts/train_tokamind_diagnostics.py \
   --feature-schema "$FEATURE_SCHEMA" \
   --run-dir ../runs/tokamind-diagnostics-real-plus-synthetic \
   --epochs 50 --batch-size 8 --lr 1e-4
+
+python scripts/plot_tokamind_diagnostics_losses.py
 ```
 
 模型调用 `external/tokamind/src/mmt` 的 `MultiModalTransformer` 和
@@ -1286,6 +1188,13 @@ python scripts/train_tokamind_diagnostics.py \
 `embed_mse`，即标准化预测 `psi` 与标准化标签 `psi` 的均方误差。每个 run 保存
 `manifest_scalers.npz` 和 `manifest_training_summary.json`，其中记录公共
 `feature_names`、input/output mean/std、manifest 和 loss history。
+最后一个命令从三组训练摘要读取 loss history，把六条 train/validation 曲线画在同一张
+图，并输出：
+
+```text
+artifacts/tokamind_loss_curves/tokamind_diagnostics_loss_curves.png
+artifacts/tokamind_loss_curves/tokamind_diagnostics_loss_summary.csv
+```
 
 ### 8.1 统一真实验证集评估
 
@@ -1294,7 +1203,16 @@ validation shots（11768、11775、11780）反标准化后计算 `psi` RMSE/MAE�
 
 ```bash
 source .tokamind-train-env/bin/activate
-python scripts/evaluate_tokamind_diagnostics.py
+source configs/reproduction/mast_small_13.env
+
+python scripts/evaluate_tokamind_diagnostics.py \
+  --manifest "$MANIFEST_DIR/${PREFIX}_diagnostics_real_only.jsonl" \
+  --run-dir ../runs/tokamind-diagnostics-real-only \
+  --run-dir ../runs/tokamind-diagnostics-synthetic-only \
+  --run-dir ../runs/tokamind-diagnostics-real-plus-synthetic \
+  --val-shot 11768 \
+  --val-shot 11775 \
+  --val-shot 11780
 ```
 
 该入口固定使用当前 diagnostics real-only manifest、三组 diagnostics checkpoint 和
@@ -1341,18 +1259,31 @@ python -m py_compile \
   scripts/build_synthetic_magnetic_diagnostics.py \
   scripts/build_experiment_manifests.py \
   scripts/train_tokamind_diagnostics.py \
+  scripts/plot_tokamind_diagnostics_losses.py \
   scripts/evaluate_tokamind_diagnostics.py
 ```
 
 阶段检查：
 
 ```bash
-test -d ../data/raw/mast/11771.zarr
-test -d ../data/raw/mast/machine/11771
-test -f ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
-test -f ../data/processed/synthetic/11771_t0.16/equilibrium.npz
-test -f ../data/processed/synthetic/11771_t0.16/metadata.json
-test -f ../data/processed/synthetic/11771_t0.16/diagnostics.npz
+source configs/reproduction/mast_small_13.env
+cmp "$SHOT_LIST" "$ACTIVE_SHOT_LIST"
+test -f "$FIT_PATH"
+test -f "$VARIANT_CSV"
+test -f "$MANIFEST_DIR/${PREFIX}_batch_report.jsonl"
+test -f "$MANIFEST_DIR/${PREFIX}_synthetic_accepted.jsonl"
+test -f "$MANIFEST_DIR/${PREFIX}_synthetic_rejected.jsonl"
+test -f "$MANIFEST_DIR/${PREFIX}_diagnostics_real_only.jsonl"
+test -f "$MANIFEST_DIR/${PREFIX}_diagnostics_synthetic_only.jsonl"
+test -f "$MANIFEST_DIR/${PREFIX}_diagnostics_real_plus_synthetic.jsonl"
+test -f ../runs/tokamind-diagnostics-real-only/manifest_training_summary.json
+test -f ../runs/tokamind-diagnostics-real-only/checkpoints/best/meta.json
+test -f ../runs/tokamind-diagnostics-synthetic-only/manifest_training_summary.json
+test -f ../runs/tokamind-diagnostics-synthetic-only/checkpoints/best/meta.json
+test -f ../runs/tokamind-diagnostics-real-plus-synthetic/manifest_training_summary.json
+test -f ../runs/tokamind-diagnostics-real-plus-synthetic/checkpoints/best/meta.json
+test -f ../artifacts/tokamind_loss_curves/tokamind_diagnostics_loss_curves.png
+test -f ../artifacts/tokamind_eval/tokamind_diagnostics_real_val_metrics.json
 ```
 
 几何图：
@@ -1372,17 +1303,21 @@ data/processed/geometry/11771.png
 
 ### 下载的 shot 缺失
 
-如果原始 `SHOT_LIST` 里有 `11770`，但本地没有 `11770.zarr`，后续步骤会失败。先生成 `ACTIVE_SHOT_LIST`，后续步骤只读 `ACTIVE_SHOT_LIST`。
+正式复现要求 `configs/shot_lists/mast_small_13.txt` 中的 13 炮全部下载完整。重新运行
+4.1 的下载循环；成功下载有完成标记时会跳过，没有完成标记时会重新执行 `s5cmd`，
+并拒绝缺少必要 Zarr group metadata 的结果。
+不要删除 shot 或缩小 `ACTIVE_SHOT_LIST` 后继续声称复现了正式实验。
 
 ### Lao fit NPZ 缺失
 
 先在 `.mast-process-env` 运行：
 
 ```bash
+source configs/reproduction/mast_small_13.env
 python scripts/build_lao_fit_npz.py \
-  --shot-list configs/shot_lists/downloaded_success.txt \
-  --data-dir ../data/raw/mast \
-  --output ../data/processed/real/lao_parameter_ensemble/all_zarr_lao_parameter_fits.npz
+  --shot-list "$ACTIVE_SHOT_LIST" \
+  --data-dir "$DATA_DIR" \
+  --output "$FIT_PATH"
 ```
 
 ### FreeGSNKE 中 NumPy 导入错误
@@ -1395,4 +1330,7 @@ python scripts/build_lao_fit_npz.py \
 
 ### 路径混淆
 
-从 `mast-bridge` 目录执行命令。默认数据目录是 `fusion-workspace/data/...`，不是 `external/LARGE_MODEL_FUSION-master/mast_data`，也不是 `data_analysis_report/`。
+从 `mast-bridge` 仓库根目录执行命令。正式路径全部由
+`configs/reproduction/mast_small_13.env` 定义；原始和生成数据在
+`fusion-workspace/data/`，训练结果在 `fusion-workspace/runs/`，图和统一评估结果在
+`fusion-workspace/artifacts/`。`data_analysis_report/` 不参与流水线。

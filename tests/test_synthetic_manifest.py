@@ -171,6 +171,27 @@ class SyntheticManifestTests(unittest.TestCase):
 
         self.assertEqual(reason, "invalid_equilibrium")
 
+    def test_sample_id_filter_excludes_stale_directories(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for sample_id in ("keep", "stale"):
+                sample = root / sample_id
+                sample.mkdir()
+                np.savez_compressed(sample / "equilibrium.npz", psi=np.zeros((65, 65)))
+                (sample / "metadata.json").write_text(
+                    json.dumps(
+                        {
+                            "parent_shot": "11771",
+                            "solver_converged": True,
+                            "solver_final_tolerance": 9e-9,
+                        }
+                    )
+                )
+
+            rows = synthetic_entries(root, sample_ids={"keep"})
+
+        self.assertEqual([row.sample_id for row in rows], ["keep"])
+
 
 if __name__ == "__main__":
     unittest.main()
