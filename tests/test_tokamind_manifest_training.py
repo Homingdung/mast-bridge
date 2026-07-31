@@ -11,6 +11,7 @@ import zarr
 from mast_bridge.training.tokamind_manifest import (
     INPUT_MAGNETIC_DIAGNOSTICS,
     ManifestWindowDataset,
+    _real_psi,
     build_manifest_datasets,
     diagnostic_feature_names,
     diagnostic_feature_vector,
@@ -94,6 +95,26 @@ class TokamindManifestTrainingTests(unittest.TestCase):
         normalized = normalize_psi(psi, psi_axis=1.0, psi_bndry=5.0)
 
         np.testing.assert_allclose(normalized, [[0.0, 0.5], [1.0, 1.5]])
+
+    def test_real_psi_transposes_mast_zr_storage_to_canonical_rz(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shot_path = self._write_real_shot(Path(tmp), "11772")
+            root = zarr.open_group(str(shot_path), mode="a")
+            z_index = np.arange(65, dtype=np.float32)[:, None]
+            r_index = np.arange(65, dtype=np.float32)[None, :]
+            stored_zr = 100.0 * z_index + r_index
+            root["equilibrium"]["psi"][:, :, 1] = stored_zr
+            row = {
+                "sample_id": "11772_t0.11_real",
+                "source": "real",
+                "shot_id": "11772",
+                "data_path": str(shot_path),
+                "target_time": 0.11,
+            }
+
+            psi_rz = _real_psi(row)
+
+        np.testing.assert_array_equal(psi_rz, stored_zr.T)
 
     def test_manifest_dataset_builds_tokamind_window_dicts_from_real_and_synthetic_rows(self):
         with tempfile.TemporaryDirectory() as tmp:

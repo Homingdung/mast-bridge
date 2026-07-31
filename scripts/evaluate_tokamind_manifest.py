@@ -165,6 +165,21 @@ def resolve_model_config(summary: dict[str, Any]) -> dict[str, float | int]:
     }
 
 
+def resolve_lora_config(summary: dict[str, Any]):
+    peft = summary.get("peft")
+    if peft is None:
+        return None
+    if not isinstance(peft, dict) or peft.get("method") != "lora":
+        raise ValueError("Training summary contains an unsupported PEFT configuration")
+    from mast_bridge.training.tokamind_lora import LoRAConfig
+
+    return LoRAConfig(
+        rank=int(peft["rank"]),
+        alpha=float(peft["alpha"]),
+        targets=str(peft["targets"]),
+    )
+
+
 def validate_evaluation_split(
     summary: dict[str, Any],
     rows: list[dict[str, Any]],
@@ -264,6 +279,11 @@ def evaluate_run(
         backbone_activation="gelu",
         debug_tokens=False,
     )
+    lora_config = resolve_lora_config(summary)
+    if lora_config is not None:
+        from mast_bridge.training.tokamind_lora import inject_lora_backbone
+
+        inject_lora_backbone(model, lora_config)
     epoch_best, best_val, checkpoint_meta = load_best_weights(str(resolved_run), model, map_location="cpu")
     require_loaded_checkpoint(epoch_best, resolved_run)
 

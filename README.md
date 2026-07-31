@@ -802,6 +802,50 @@ real manifest 的 `label_source` 是 `zarr_equilibrium_psi`，真实标签直接
 `equilibrium/psi`，不运行 FreeGSNKE。synthetic manifest 的标签来自
 `equilibrium_path`，输入来自 `diagnostics_path`。
 
+### 4.8 构建严格配对的平衡对比清单
+
+上面的 `171/219/390` 清单保留了全部通过筛选的 synthetic variants，适合回答“加入
+所有可用仿真数据是否有帮助”。但同一个真实 `(shot, time)` 可能对应两个收敛变体，
+因此不适合作为严格等量的真实/仿真来源对比。
+
+严格对比时，在 solver 和 diagnostics 两层过滤之后，对每个唯一
+`(parent_shot, target_time)` 用固定种子只选一个 synthetic variant：
+
+```bash
+python scripts/build_experiment_manifests.py \
+  --accepted-synthetic "$MANIFEST_DIR/${PREFIX}_synthetic_accepted.jsonl" \
+  --raw-data-dir "$DATA_DIR" \
+  --fit-path "$FIT_PATH" \
+  --output-dir "$MANIFEST_DIR" \
+  --prefix "${PREFIX}_diagnostics_paired_balanced" \
+  --task task_1-3 \
+  --require-synthetic-diagnostics \
+  --one-synthetic-per-parent \
+  --selection-seed 20260731
+```
+
+选择使用带种子的 SHA-256 排序，与 accepted manifest 的输入行顺序无关，也不会按
+solver residual 挑选“最好”的变体。选中的 synthetic 行会记录
+`variant_selection_method=seeded_hash` 和 `variant_selection_seed=20260731`。
+该命令不重新求解 FreeGSNKE，也不覆盖原来的全量清单。
+
+当前平衡清单为：
+
+```text
+diagnostics_paired_balanced_real_only                 171
+diagnostics_paired_balanced_synthetic_only            171
+diagnostics_paired_balanced_real_plus_synthetic       342
+```
+
+三组清单中的真实和仿真部分具有完全相同的 171 个 `(shot, time)` 父样本。训练和验证
+仍必须按 shot 分组。注意，这 171 个父样本是“至少有一个 synthetic variant 通过
+收敛和 diagnostics 筛选”的条件子集，不代表原始 312 个候选父样本的完整真实分布；
+平衡操作消除的是重复 variant 带来的父样本权重偏差，不会消除收敛选择偏差。
+
+mixed 组包含两倍样本。若三组使用相同 epoch，这应解释为数据扩增实验；若要严格比较
+数据来源，应保持相同 batch size 并匹配 optimizer steps，例如让单来源组训练约两倍
+epoch，同时记录每组实际更新次数。最终误差仍在同一组、未参与训练的真实 shot 上计算。
+
 ## 5. 当前 uniform_iter500 复现流程
 
 当前正式复现顺序只有一条：
@@ -1065,21 +1109,23 @@ pickup 是按 Level 2 方向约定得到的 `B.n`。
 
 训练、验证、测试必须按 shot 划分。同一个 shot 的真实样本和所有 synthetic variants 必须在同一个 split，避免信息泄漏。
 
-推荐 manifest：
+严格配对对比推荐 manifest：
 
 ```text
 data/manifests/
 ├── tokamark_lao85_uniform_small_iter500_synthetic_accepted.jsonl
 ├── tokamark_lao85_uniform_small_iter500_synthetic_rejected.jsonl
-├── tokamark_lao85_uniform_small_iter500_diagnostics_real_only.jsonl
-├── tokamark_lao85_uniform_small_iter500_diagnostics_synthetic_only.jsonl
-└── tokamark_lao85_uniform_small_iter500_diagnostics_real_plus_synthetic.jsonl
+├── tokamark_lao85_uniform_small_iter500_diagnostics_paired_balanced_real_only.jsonl
+├── tokamark_lao85_uniform_small_iter500_diagnostics_paired_balanced_synthetic_only.jsonl
+└── tokamark_lao85_uniform_small_iter500_diagnostics_paired_balanced_real_plus_synthetic.jsonl
 ```
 
 `*_synthetic_accepted.jsonl` 由 `scripts/build_synthetic_manifest.py` 生成；不要手写，
 也不要把 rejected 样本并入 train/val/test。`*_real_only.jsonl`、
 `*_synthetic_only.jsonl` 和 `*_real_plus_synthetic.jsonl` 由
-`scripts/build_experiment_manifests.py --require-synthetic-diagnostics` 生成。
+`scripts/build_experiment_manifests.py --require-synthetic-diagnostics` 生成。严格等量
+对比使用 4.8 的 `--one-synthetic-per-parent`；需要使用全部 accepted synthetic 做
+扩增实验时，使用 4.7 的非平衡清单。
 
 每行至少包含：
 
@@ -1125,6 +1171,38 @@ Lao 参数任务。
 `configs/diagnostic_features/mast_level2_common_94.json`，训练时不会静默重新求交集。
 若数据变化导致任一字段缺失或 non-finite，训练会直接报错，需要显式审查并更新 schema。
 
+### 8.1 公平对比训练设计
+
+所有实验固定使用同一个 `MultiModalTransformer`：`d_model=64`、`n_layers=2`、
+`n_heads=4`、`dim_ff=128`、`dropout=0.05`，并固定 `seed=54`、`batch_size=8`、
+`lr=1e-4`、AdamW 和 `embed_mse`。输入为版本化的 94 维磁诊断特征，输出为
+`65 x 65` 的 raw `psi[R,Z]`。训练集的输入和输出 scaler 只用该组 train split
+计算，validation 不参与 scaler 拟合。
+
+严格配对清单包含 171 个 real 和与其 `(shot,time)` 一一对应的 171 个 synthetic
+样本。单来源组每个 epoch 约 18 次更新，mixed 组约 36 次更新；因此单来源训练
+50 epoch、mixed 训练 25 epoch，使每个下游实验均约 900 次 optimizer updates：
+
+| 实验 | 初始化 | 下游训练数据 | Epoch | 下游更新 | 可训练参数 |
+|---|---|---|---:|---:|---:|
+| real scratch | 随机初始化 | 171 real | 50 | 约 900 | 364,993 |
+| synthetic pretrain | 随机初始化 | 171 synthetic | 50 | 约 900 | 364,993 |
+| mixed scratch | 随机初始化 | 171 real + 171 synthetic | 25 | 约 900 | 364,993 |
+| pretrain + LoRA real | synthetic best checkpoint | 171 real | 50 | 约 900 | 12,288 |
+| pretrain + LoRA mixed | synthetic best checkpoint | 171 real + 171 synthetic | 25 | 约 900 | 12,288 |
+| pretrain + full real | synthetic best checkpoint | 171 real | 50 | 约 900 | 364,993 |
+| pretrain + full mixed | synthetic best checkpoint | 171 real + 171 synthetic | 25 | 约 900 | 364,993 |
+
+两组预训练方案都使用同一个 synthetic-only best checkpoint。加载预训练权重时，
+脚本会先把输入投影层和最终输出层从 synthetic scaler 坐标系解析换算到下游数据集的
+scaler 坐标系，保证微调开始前的 raw-psi 预测等价；之后才注入 LoRA 或执行全参数
+微调。LoRA 固定为 `rank=8`、`alpha=16`，只训练 Transformer 中的融合 QKV、
+attention output 和两层 FFN 低秩参数。
+
+所有模型最终必须在相同的真实 validation shots（11768、11775、11780）上反标准化
+评估 raw `psi` RMSE/MAE。不同训练集的标准化 loss 不可直接横向比较，README 只记录
+训练与评估方法，不记录具体实验结果。
+
 先 dry-run：
 
 ```bash
@@ -1157,6 +1235,7 @@ target_mode: raw-psi
 
 ```bash
 source configs/reproduction/mast_small_13.env
+# 以下三项复现已记录的 171/219/390 全量 accepted 实验。
 REAL="$MANIFEST_DIR/${PREFIX}_diagnostics_real_only.jsonl"
 SYNTHETIC="$MANIFEST_DIR/${PREFIX}_diagnostics_synthetic_only.jsonl"
 COMMON="$MANIFEST_DIR/${PREFIX}_diagnostics_real_plus_synthetic.jsonl"
@@ -1183,6 +1262,43 @@ python scripts/train_tokamind_diagnostics.py \
 python scripts/plot_tokamind_diagnostics_losses.py
 ```
 
+新一轮严格配对实验使用下面的命令。单来源组每个 epoch 有约 18 个 optimizer
+steps，混合组约 36 个，因此使用 `50/50/25 epochs`，使三组都约为 900 次更新：
+
+```bash
+source .tokamind-train-env/bin/activate
+source configs/reproduction/mast_small_13.env
+
+REAL="$MANIFEST_DIR/${PREFIX}_diagnostics_paired_balanced_real_only.jsonl"
+SYNTHETIC="$MANIFEST_DIR/${PREFIX}_diagnostics_paired_balanced_synthetic_only.jsonl"
+COMMON="$MANIFEST_DIR/${PREFIX}_diagnostics_paired_balanced_real_plus_synthetic.jsonl"
+FEATURE_SCHEMA=configs/diagnostic_features/mast_level2_common_94.json
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$REAL" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-real-only-50e-rzfix \
+  --epochs 50 --batch-size 8 --lr 1e-4
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$SYNTHETIC" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-synthetic-only-50e \
+  --epochs 50 --batch-size 8 --lr 1e-4
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$COMMON" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-mixed-25e-rzfix \
+  --epochs 25 --batch-size 8 --lr 1e-4
+```
+
+新的 `--run-dir` 不会覆盖已记录的全量 accepted checkpoints。平衡 mixed manifest
+的 dry-run 应为 `342` 行、真实/仿真各 `171`、训练/验证窗口 `286/56`。
+
 模型调用 `external/tokamind/src/mmt` 的 `MultiModalTransformer` 和
 `train_finetune`。目标 `psi` 按训练集逐网格点标准化，loss 是 TokaMind
 `embed_mse`，即标准化预测 `psi` 与标准化标签 `psi` 的均方误差。每个 run 保存
@@ -1196,7 +1312,7 @@ artifacts/tokamind_loss_curves/tokamind_diagnostics_loss_curves.png
 artifacts/tokamind_loss_curves/tokamind_diagnostics_loss_summary.csv
 ```
 
-### 8.1 统一真实验证集评估
+### 8.2 统一真实验证集评估
 
 三组训练 loss 使用各自的标准化参数，不能直接横向比较。使用相同的真实 EFIT
 validation shots（11768、11775、11780）反标准化后计算 `psi` RMSE/MAE：
@@ -1206,10 +1322,10 @@ source .tokamind-train-env/bin/activate
 source configs/reproduction/mast_small_13.env
 
 python scripts/evaluate_tokamind_diagnostics.py \
-  --manifest "$MANIFEST_DIR/${PREFIX}_diagnostics_real_only.jsonl" \
-  --run-dir ../runs/tokamind-diagnostics-real-only \
-  --run-dir ../runs/tokamind-diagnostics-synthetic-only \
-  --run-dir ../runs/tokamind-diagnostics-real-plus-synthetic \
+  --manifest "$MANIFEST_DIR/${PREFIX}_diagnostics_paired_balanced_real_only.jsonl" \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-real-only-50e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-synthetic-only-50e \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-mixed-25e-rzfix \
   --val-shot 11768 \
   --val-shot 11775 \
   --val-shot 11780
@@ -1224,19 +1340,123 @@ python scripts/evaluate_tokamind_diagnostics.py \
 | 11775 | 10 | 0.120、0.125、0.140、0.155、0.160、0.165、0.170、0.210、0.215、0.225 |
 | 11780 | 11 | 0.125、0.140、0.145、0.170、0.195、0.205、0.210、0.215、0.225、0.230、0.235 |
 
-当前 28 个真实 validation 样本上的结果：
-
-| 训练数据 | Raw psi RMSE | Raw psi MAE |
-|---|---:|---:|
-| 仅真实数据 | 0.001947 | 0.001272 |
-| 仅仿真数据 | 0.044866 | 0.035819 |
-| 真实 + 仿真 | 0.002213 | 0.001681 |
-
 这些炮在训练时未进入 train split，但参与了最佳 checkpoint 的选择，因此应称为
 统一真实 validation set，而不是完全独立的 test set。
 
 评估入口会从训练摘要恢复模型结构，并检查待评估炮没有出现在 train split 中；
 训练摘要或 checkpoint 缺失时会直接拒绝评估。
+
+### 8.3 仿真预训练 + LoRA 微调
+
+在严格配对实验基础上增加两组 PEFT 对比：
+
+1. synthetic-only best checkpoint -> real-only LoRA fine-tuning；
+2. 同一个 synthetic-only best checkpoint -> real+synthetic LoRA fine-tuning。
+
+两组固定使用同一个预训练 checkpoint、模型结构、`seed=54`、`batch_size=8`、
+`lr=1e-4`、AdamW 和 `embed_mse`。LoRA 配置固定为 `rank=8`、`alpha=16`，
+注入两层 Transformer 的融合 QKV、attention output 和两层 FFN 权重。原模型参数
+全部冻结，只训练 12,288 个 LoRA 参数，约占原模型参数的 3.4%。
+
+预训练模型使用 synthetic-only scaler，下游实验分别使用自己的训练集 scaler。
+脚本会解析换算输入投影层和最终 psi 输出层，使换算前后的 raw-psi 初始预测等价，
+然后再注入 LoRA。不要把这个步骤改成直接加载权重后冻结输出头，否则两个 scaler
+坐标系不一致。
+
+```bash
+source .tokamind-train-env/bin/activate
+source configs/reproduction/mast_small_13.env
+
+REAL="$MANIFEST_DIR/${PREFIX}_diagnostics_paired_balanced_real_only.jsonl"
+COMMON="$MANIFEST_DIR/${PREFIX}_diagnostics_paired_balanced_real_plus_synthetic.jsonl"
+FEATURE_SCHEMA=configs/diagnostic_features/mast_level2_common_94.json
+PRETRAIN=../runs/tokamind-diagnostics-paired-balanced-synthetic-only-50e
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$REAL" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --init-run-dir "$PRETRAIN" \
+  --finetune-method lora \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-lora-real-only-50e-rzfix \
+  --epochs 50 --batch-size 8 --lr 1e-4 \
+  --lora-rank 8 --lora-alpha 16
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$COMMON" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --init-run-dir "$PRETRAIN" \
+  --finetune-method lora \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-lora-mixed-25e-rzfix \
+  --epochs 25 --batch-size 8 --lr 1e-4 \
+  --lora-rank 8 --lora-alpha 16
+```
+
+real-only 每个 epoch 为 18 个 optimizer steps，训练 50 epoch；mixed 每个
+epoch 为 36 steps，训练 25 epoch，因此两组下游微调均为 900 steps。加上
+synthetic 预训练的 900 steps，每个预训练方案总计 1,800 steps。与 scratch
+模型比较时，应同时报告下游 steps 和包含预训练的总 steps。
+
+训练摘要的 `peft` 字段记录预训练 checkpoint 路径及 SHA-256、LoRA 参数、可训练
+参数量和 scaler 换算方式。完成后在同一组 28 个真实 EFIT validation 样本上评估：
+
+```bash
+python scripts/evaluate_tokamind_diagnostics.py \
+  --manifest "$REAL" \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-real-only-50e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-mixed-25e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-lora-real-only-50e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-lora-mixed-25e-rzfix \
+  --output-json ../artifacts/tokamind_rzfix_pretrain_lora_evaluation.json \
+  --output-csv ../artifacts/tokamind_rzfix_pretrain_lora_evaluation.csv
+```
+
+### 8.4 仿真预训练 + 全参数微调
+
+使用 `--finetune-method full` 加载与 LoRA 实验相同的 synthetic-only best
+checkpoint，并进行相同的 scaler 解析换算，但不注入 LoRA，也不冻结任何模块。
+所有 364,993 个模型参数均参与下游训练。
+
+```bash
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$REAL" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --init-run-dir "$PRETRAIN" \
+  --finetune-method full \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-full-real-only-50e-rzfix \
+  --epochs 50 --batch-size 8 --lr 1e-4
+
+python scripts/train_tokamind_diagnostics.py \
+  --manifest "$COMMON" \
+  --feature-schema "$FEATURE_SCHEMA" \
+  --feature-reference-manifest "$COMMON" \
+  --init-run-dir "$PRETRAIN" \
+  --finetune-method full \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-full-mixed-25e-rzfix \
+  --epochs 25 --batch-size 8 --lr 1e-4
+```
+
+real-only full fine-tune 与 real-only scratch 的数据、split、scaler、模型结构、
+seed、batch size、学习率、loss、优化器和 900 个下游 steps 完全一致；mixed
+实验也按相同原则配对。成对实验唯一有意改变的是随机初始化或 synthetic 预训练初始化。
+
+完整评估命令：
+
+```bash
+python scripts/evaluate_tokamind_diagnostics.py \
+  --manifest "$REAL" \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-real-only-50e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-synthetic-only-50e \
+  --run-dir ../runs/tokamind-diagnostics-paired-balanced-mixed-25e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-lora-real-only-50e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-lora-mixed-25e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-full-real-only-50e-rzfix \
+  --run-dir ../runs/tokamind-diagnostics-pretrain-full-mixed-25e-rzfix \
+  --output-json ../artifacts/tokamind_rzfix_pretraining_finetune_evaluation.json \
+  --output-csv ../artifacts/tokamind_rzfix_pretraining_finetune_evaluation.csv
+```
 
 当前输入覆盖 flux loop 与 CCBV/OBR/OBV pickup probes，还没有加入 saddle voltage
 和时间序列窗口；因此这是 diagnostics-to-psi 的最小任务，不应描述成完整复现
@@ -1334,3 +1554,26 @@ python scripts/build_lao_fit_npz.py \
 `configs/reproduction/mast_small_13.env` 定义；原始和生成数据在
 `fusion-workspace/data/`，训练结果在 `fusion-workspace/runs/`，图和统一评估结果在
 `fusion-workspace/artifacts/`。`data_analysis_report/` 不参与流水线。
+
+## 11. 重要注意事项
+
+### 真实与仿真 psi 的轴顺序
+
+- 下载的 MAST Level-2 数据位于 `<shot>.zarr/equilibrium/psi`，存储顺序是
+  `[Z, R, time]`；取出一个时间片后是 `[Z, R]`。
+- FreeGSNKE `eq.psi()` 的二维输出顺序是 `[R, Z]`。本项目训练标签、插值函数和模型
+  输出统一采用 `[R, Z]`。
+- 因此真实数据读取器必须将 MAST 时间片从 `[Z, R]` 转置为 `[R, Z]`。该判断已用
+  171 个真实样本的 EFIT 磁轴位置核对：磁轴均对应原始数组的 `[Z index, R index]`。
+- 修改标签轴顺序、诊断通道或特征定义后，必须使用新的 run 目录重新计算 scaler 并
+  重新训练。轴顺序修复前生成的 checkpoint 和误差结果不能与修复后的实验混用。
+
+### 收敛与物理一致性
+
+- `solver_tolerance <= 1e-8` 只说明 FreeGSNKE 数值迭代收敛，不表示求解结果与原始
+  EFIT 平衡完全一致。
+- 当前 QC 图中的黑色虚线和红色 separatrix 都由同一个 FreeGSNKE 解计算，二者吻合
+  是求解器内部几何一致性检查，不是 FreeGSNKE 与 EFIT 的直接叠加比较。
+- 只保留收敛扰动样本会产生选择偏差：容易收敛的 shot、时间片和扰动方向可能被过度
+  代表。比较真实与仿真数据时，应同时报告 shot/time 分布和接受率，并保留少量零扰动
+  对照以区分重建误差与参数扰动误差。

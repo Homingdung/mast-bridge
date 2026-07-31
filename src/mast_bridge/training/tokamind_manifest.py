@@ -137,7 +137,10 @@ def _real_psi(row: dict[str, Any]) -> np.ndarray:
     root = zarr.open_group(str(Path(row["data_path"]).expanduser().resolve()), mode="r")
     equilibrium = root["equilibrium"]
     index = _nearest_index(equilibrium["time"][:], float(row["target_time"]))
-    psi = np.asarray(equilibrium["psi"][:, :, index], dtype=np.float32)
+    # Downloaded MAST Level-2 psi is stored as [Z, R, time].  The bridge and
+    # FreeGSNKE use [R, Z], so convert at the real-data boundary.
+    psi_zr = np.asarray(equilibrium["psi"][:, :, index], dtype=np.float32)
+    psi = np.ascontiguousarray(psi_zr.T)
     return _validate_psi(psi, row)
 
 

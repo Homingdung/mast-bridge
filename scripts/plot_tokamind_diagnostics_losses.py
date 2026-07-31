@@ -46,6 +46,17 @@ DEFAULT_CSV = (
 )
 
 
+def resolve_run_specs(
+    run_dirs: list[Path] | None,
+) -> list[tuple[str, Path, str | None]]:
+    if run_dirs is None:
+        return list(DEFAULT_RUNS)
+    return [
+        (experiment, run_dir, None)
+        for run_dir, (experiment, _, _) in zip(run_dirs, DEFAULT_RUNS, strict=True)
+    ]
+
+
 def load_loss_rows(
     run_dir: Path,
     experiment: str,
@@ -60,9 +71,15 @@ def load_loss_rows(
             raise ValueError(
                 f"{summary_path} uses {actual_manifest!r}, expected {expected_manifest!r}"
             )
-    history = summary.get("history", {}).get("stages", {}).get("manifest_scratch")
+    stages = summary.get("history", {}).get("stages", {})
+    fine_tune_method = (summary.get("fine_tuning") or {}).get("method")
+    stage_name = {
+        "lora": "manifest_lora",
+        "full": "manifest_full_finetune",
+    }.get(fine_tune_method, "manifest_lora" if summary.get("peft") else "manifest_scratch")
+    history = stages.get(stage_name)
     if not isinstance(history, list) or not history:
-        raise ValueError(f"missing manifest_scratch history: {summary_path}")
+        raise ValueError(f"missing {stage_name} history: {summary_path}")
 
     rows: list[dict[str, Any]] = []
     for item in history:
@@ -151,12 +168,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.run_dir is not None and len(args.run_dir) != len(DEFAULT_RUNS):
         parser.error("--run-dir must be repeated exactly three times")
-    run_dirs = args.run_dir or [run_dir for _, run_dir, _ in DEFAULT_RUNS]
+    run_specs = resolve_run_specs(args.run_dir)
     grouped_rows = [
         load_loss_rows(run_dir, experiment, expected_manifest)
-        for run_dir, (experiment, _, expected_manifest) in zip(
-            run_dirs, DEFAULT_RUNS, strict=True
-        )
+        for experiment, run_dir, expected_manifest in run_specs
     ]
     rows = [row for group in grouped_rows for row in group]
     write_loss_csv(args.output_csv.expanduser().resolve(), rows)

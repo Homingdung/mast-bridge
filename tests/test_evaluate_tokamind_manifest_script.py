@@ -141,6 +141,24 @@ class EvaluateTokamindManifestScriptTests(unittest.TestCase):
         with self.assertRaisesRegex(FileNotFoundError, "checkpoint"):
             MODULE.require_loaded_checkpoint(-1, Path("missing-run"))
 
+    def test_resolve_lora_config_accepts_recorded_peft_run(self):
+        config = MODULE.resolve_lora_config(
+            {
+                "peft": {
+                    "method": "lora",
+                    "rank": 8,
+                    "alpha": 16.0,
+                    "targets": "transformer_qkv_out_ffn",
+                }
+            }
+        )
+
+        self.assertEqual(config.rank, 8)
+        self.assertEqual(config.alpha, 16.0)
+
+    def test_resolve_lora_config_leaves_scratch_run_unmodified(self):
+        self.assertIsNone(MODULE.resolve_lora_config({}))
+
 
 if __name__ == "__main__":
     unittest.main()

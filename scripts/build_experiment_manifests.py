@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -35,6 +36,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Exclude synthetic rows without a valid diagnostics.npz payload.",
     )
+    parser.add_argument(
+        "--one-synthetic-per-parent",
+        action="store_true",
+        help=(
+            "Select exactly one accepted synthetic variant per "
+            "(parent_shot, target_time)."
+        ),
+    )
+    parser.add_argument(
+        "--selection-seed",
+        type=int,
+        default=20260731,
+        help="Seed used for deterministic per-parent variant selection.",
+    )
     return parser
 
 
@@ -49,6 +64,58 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _time_label(value: Any) -> str:
     return f"{float(value):g}"
+
+
+def select_one_synthetic_per_parent(
+    synthetic_rows: list[dict[str, Any]],
+    seed: int,
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, float], list[dict[str, Any]]] = {}
+    sample_ids: set[str] = set()
+    for row in synthetic_rows:
+        sample_id = str(row["sample_id"])
+        if sample_id in sample_ids:
+            raise ValueError(f"duplicate sample_id in synthetic rows: {sample_id}")
+        sample_ids.add(sample_id)
+        key = (str(row["parent_shot"]), float(row["target_time"]))
+        grouped.setdefault(key, []).append(row)
+
+    selected: list[dict[str, Any]] = []
+    for (shot, target_time), rows in sorted(grouped.items()):
+        def seeded_rank(row: dict[str, Any]) -> str:
+            value = (
+                f"{seed}|{shot}|{target_time:.17g}|{row['sample_id']}"
+            ).encode("utf-8")
+            return hashlib.sha256(value).hexdigest()
+
+        chosen = dict(min(rows, key=seeded_rank))
+        chosen["variant_selection_method"] = "seeded_hash"
+        chosen["variant_selection_seed"] = seed
+        selected.append(chosen)
+    return selected
+
+
+def validate_paired_parent_sets(
+    real_entries: list[ManifestEntry],
+    synthetic_rows: list[dict[str, Any]],
+) -> None:
+    real_keys = {
+        (entry.shot_id, float(entry.metadata["target_time"]))
+        for entry in real_entries
+    }
+    synthetic_keys = {
+        (str(row["parent_shot"]), float(row["target_time"]))
+        for row in synthetic_rows
+    }
+    if real_keys == synthetic_keys:
+        return
+
+    missing_real = sorted(synthetic_keys - real_keys)
+    missing_synthetic = sorted(real_keys - synthetic_keys)
+    raise ValueError(
+        "paired parent mismatch: "
+        f"missing_real={missing_real}, missing_synthetic={missing_synthetic}"
+    )
 
 
 def build_real_entries(
@@ -171,12 +238,23 @@ def rows_with_valid_diagnostics(
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.one_synthetic_per_parent and not args.require_synthetic_diagnostics:
+        parser.error(
+            "--one-synthetic-per-parent requires --require-synthetic-diagnostics"
+        )
     synthetic_rows = _read_jsonl(args.accepted_synthetic)
     excluded_diagnostics: list[dict[str, Any]] = []
     if args.require_synthetic_diagnostics:
         synthetic_rows, excluded_diagnostics = rows_with_valid_diagnostics(
             synthetic_rows
+        )
+    synthetic_rows_before_selection = len(synthetic_rows)
+    if args.one_synthetic_per_parent:
+        synthetic_rows = select_one_synthetic_per_parent(
+            synthetic_rows,
+            seed=args.selection_seed,
         )
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -188,6 +266,8 @@ def main(argv: list[str] | None = None) -> int:
         args.task,
         "real_only",
     )
+    if args.one_synthetic_per_parent:
+        validate_paired_parent_sets(real_only, synthetic_rows)
     synthetic_only = build_synthetic_entries(synthetic_rows, "synthetic_only")
     mixed = build_real_entries(
         synthetic_rows,
@@ -210,6 +290,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"real_plus_synthetic: {len(mixed)} -> {mixed_path}")
     if args.require_synthetic_diagnostics:
         print(f"synthetic_missing_or_invalid_diagnostics: {len(excluded_diagnostics)}")
+    if args.one_synthetic_per_parent:
+        print(
+            "synthetic_parent_balancing: "
+            f"{synthetic_rows_before_selection} -> {len(synthetic_rows)} "
+            f"(seed={args.selection_seed})"
+        )
     return 0
 
 

@@ -1,7 +1,9 @@
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +18,219 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 
 
+def write_valid_synthetic_row(
+    root: Path,
+    sample_id: str,
+    shot: str = "11772",
+    target_time: float = 0.10,
+) -> dict:
+    sample = root / "synthetic" / sample_id
+    sample.mkdir(parents=True)
+    np.savez_compressed(
+        sample / "equilibrium.npz",
+        psi=np.zeros((65, 65), dtype=np.float32),
+    )
+    write_synthetic_diagnostics(
+        sample / "diagnostics.npz",
+        target_time=target_time,
+        magnetics_ip=100_000.0,
+        flux_loop_names=["FL1"],
+        flux_loop_values=[0.1],
+        pickup_names=["OBR01"],
+        pickup_families=["OBR"],
+        pickup_values=[0.2],
+        active_coil_currents={"SOL": 10.0},
+        flux_loop_scale=2.0 * np.pi,
+    )
+    return {
+        "sample_id": sample_id,
+        "source": "synthetic",
+        "parent_shot": shot,
+        "target_time": target_time,
+        "data_path": str(sample),
+        "equilibrium_path": str(sample / "equilibrium.npz"),
+        "solver_converged": True,
+        "solver_final_tolerance": 2e-9,
+    }
+
+
 class BuildExperimentManifestsScriptTests(unittest.TestCase):
+    def test_one_synthetic_per_parent_is_balanced_and_order_independent(self):
+        rows = [
+            {
+                "sample_id": "11772_t0.10_v001",
+                "parent_shot": "11772",
+                "target_time": 0.10,
+            },
+            {
+                "sample_id": "11773_t0.12_v000",
+                "parent_shot": "11773",
+                "target_time": 0.12,
+            },
+            {
+                "sample_id": "11772_t0.10_v000",
+                "parent_shot": "11772",
+                "target_time": 0.10,
+            },
+        ]
+
+        selected = MODULE.select_one_synthetic_per_parent(rows, seed=20260731)
+        selected_reversed = MODULE.select_one_synthetic_per_parent(
+            list(reversed(rows)),
+            seed=20260731,
+        )
+
+        self.assertEqual(len(selected), 2)
+        self.assertEqual(
+            [row["sample_id"] for row in selected],
+            [row["sample_id"] for row in selected_reversed],
+        )
+        self.assertEqual(
+            {
+                (row["parent_shot"], row["target_time"])
+                for row in selected
+            },
+            {("11772", 0.10), ("11773", 0.12)},
+        )
+        self.assertTrue(
+            all(row["variant_selection_method"] == "seeded_hash" for row in selected)
+        )
+        self.assertTrue(
+            all(row["variant_selection_seed"] == 20260731 for row in selected)
+        )
+
+    def test_one_synthetic_per_parent_rejects_duplicate_sample_ids(self):
+        rows = [
+            {
+                "sample_id": "11772_t0.10_v000",
+                "parent_shot": "11772",
+                "target_time": 0.10,
+                "data_path": "first",
+            },
+            {
+                "sample_id": "11772_t0.10_v000",
+                "parent_shot": "11772",
+                "target_time": 0.10,
+                "data_path": "second",
+            },
+        ]
+
+        with self.assertRaisesRegex(ValueError, "duplicate sample_id"):
+            MODULE.select_one_synthetic_per_parent(rows, seed=20260731)
+
+    def test_paired_mode_requires_diagnostics_validation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            accepted = root / "accepted.jsonl"
+            accepted.write_text("", encoding="utf-8")
+            stderr = io.StringIO()
+
+            with redirect_stderr(stderr), self.assertRaises(SystemExit):
+                MODULE.main(
+                    [
+                        "--accepted-synthetic",
+                        str(accepted),
+                        "--raw-data-dir",
+                        str(root),
+                        "--fit-path",
+                        str(root / "fits.npz"),
+                        "--output-dir",
+                        str(root / "manifests"),
+                        "--one-synthetic-per-parent",
+                    ]
+                )
+
+        self.assertIn(
+            "--one-synthetic-per-parent requires --require-synthetic-diagnostics",
+            stderr.getvalue(),
+        )
+
+    def test_paired_mode_rejects_missing_real_parent_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            accepted = root / "accepted.jsonl"
+            row = write_valid_synthetic_row(root, "11772_t0.10_v000")
+            accepted.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "paired parent mismatch"):
+                MODULE.main(
+                    [
+                        "--accepted-synthetic",
+                        str(accepted),
+                        "--raw-data-dir",
+                        str(root / "raw" / "mast"),
+                        "--fit-path",
+                        str(root / "fits.npz"),
+                        "--output-dir",
+                        str(root / "manifests"),
+                        "--one-synthetic-per-parent",
+                        "--require-synthetic-diagnostics",
+                    ]
+                )
+
+    def test_cli_writes_one_synthetic_row_for_each_real_parent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            raw = root / "raw" / "mast"
+            (raw / "11772.zarr").mkdir(parents=True)
+            (raw / "machine" / "11772").mkdir(parents=True)
+            accepted = root / "accepted.jsonl"
+            rows = [
+                write_valid_synthetic_row(
+                    root,
+                    f"11772_t0.10_v00{variant}",
+                )
+                for variant in range(2)
+            ]
+            accepted.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+            output_dir = root / "manifests"
+
+            exit_code = MODULE.main(
+                [
+                    "--accepted-synthetic",
+                    str(accepted),
+                    "--raw-data-dir",
+                    str(raw),
+                    "--fit-path",
+                    str(root / "fits.npz"),
+                    "--output-dir",
+                    str(output_dir),
+                    "--prefix",
+                    "paired",
+                    "--one-synthetic-per-parent",
+                    "--selection-seed",
+                    "20260731",
+                    "--require-synthetic-diagnostics",
+                ]
+            )
+            real_rows = [
+                json.loads(line)
+                for line in (
+                    output_dir / "paired_real_only.jsonl"
+                ).read_text().splitlines()
+            ]
+            synthetic_rows = [
+                json.loads(line)
+                for line in (
+                    output_dir / "paired_synthetic_only.jsonl"
+                ).read_text().splitlines()
+            ]
+            mixed_rows = [
+                json.loads(line)
+                for line in (
+                    output_dir / "paired_real_plus_synthetic.jsonl"
+                ).read_text().splitlines()
+            ]
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(real_rows), 1)
+        self.assertEqual(len(synthetic_rows), 1)
+        self.assertEqual(len(mixed_rows), 2)
+        self.assertEqual(synthetic_rows[0]["variant_selection_seed"], 20260731)
+
     def test_builds_real_synthetic_and_mixed_experiment_manifests(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

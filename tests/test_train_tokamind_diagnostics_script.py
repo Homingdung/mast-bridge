@@ -73,6 +73,46 @@ class TrainTokamindDiagnosticsScriptTests(unittest.TestCase):
             ["11768", "11775", "11780"],
         )
 
+    def test_forwards_pretrained_lora_options(self):
+        args = diagnostics_script.build_parser().parse_args(
+            [
+                "--init-run-dir",
+                "../runs/synthetic-pretrain",
+                "--lora-rank",
+                "8",
+                "--lora-alpha",
+                "16",
+            ]
+        )
+
+        forwarded = diagnostics_script._manifest_args(args)
+
+        self.assertEqual(
+            forwarded[forwarded.index("--init-run-dir") + 1],
+            "../runs/synthetic-pretrain",
+        )
+        self.assertEqual(forwarded[forwarded.index("--lora-rank") + 1], "8")
+        self.assertEqual(forwarded[forwarded.index("--lora-alpha") + 1], "16.0")
+
+    def test_forwards_full_finetune_method(self):
+        args = diagnostics_script.build_parser().parse_args(
+            [
+                "--init-run-dir",
+                "../runs/synthetic-pretrain",
+                "--finetune-method",
+                "full",
+            ]
+        )
+
+        forwarded = diagnostics_script._manifest_args(args)
+
+        self.assertEqual(
+            forwarded[forwarded.index("--finetune-method") + 1],
+            "full",
+        )
+        self.assertNotIn("--lora-rank", forwarded)
+        self.assertNotIn("--lora-alpha", forwarded)
+
 
 if __name__ == "__main__":
     unittest.main()

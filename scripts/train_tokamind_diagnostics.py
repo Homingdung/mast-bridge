@@ -74,6 +74,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-heads", type=int, default=4)
     parser.add_argument("--dim-ff", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.05)
+    parser.add_argument(
+        "--init-run-dir",
+        type=Path,
+        default=None,
+        help="Synthetic pretraining run used to initialize fine-tuning.",
+    )
+    parser.add_argument(
+        "--finetune-method",
+        choices=("lora", "full"),
+        default="lora",
+    )
+    parser.add_argument("--lora-rank", type=int, default=8)
+    parser.add_argument("--lora-alpha", type=float, default=16.0)
     parser.add_argument("--target-mode", choices=sorted(TARGET_MODES), default=TARGET_RAW_PSI)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -119,6 +132,24 @@ def _manifest_args(args: argparse.Namespace) -> list[str]:
         )
     if args.feature_schema is not None:
         forwarded.extend(["--feature-schema", str(args.feature_schema)])
+    if args.init_run_dir is not None:
+        forwarded.extend(
+            [
+                "--init-run-dir",
+                str(args.init_run_dir),
+                "--finetune-method",
+                str(args.finetune_method),
+            ]
+        )
+        if args.finetune_method == "lora":
+            forwarded.extend(
+                [
+                    "--lora-rank",
+                    str(args.lora_rank),
+                    "--lora-alpha",
+                    str(args.lora_alpha),
+                ]
+            )
     for shot in args.val_shot or DEFAULT_VAL_SHOTS:
         forwarded.extend(["--val-shot", str(shot)])
     if args.dry_run:

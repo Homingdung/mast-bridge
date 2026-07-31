@@ -16,6 +16,20 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PlotTokamindDiagnosticsLossesTests(unittest.TestCase):
+    def test_custom_run_directories_do_not_require_default_manifest_names(self) -> None:
+        custom_runs = [Path("real"), Path("synthetic"), Path("mixed")]
+
+        specs = MODULE.resolve_run_specs(custom_runs)
+
+        self.assertEqual(
+            specs,
+            [
+                ("Real only", Path("real"), None),
+                ("Synthetic only", Path("synthetic"), None),
+                ("Real + synthetic", Path("mixed"), None),
+            ],
+        )
+
     def test_load_loss_rows_reads_training_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             run_dir = Path(temp_dir) / "run"
@@ -66,6 +80,62 @@ class PlotTokamindDiagnosticsLossesTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "manifest_scratch"):
                 MODULE.load_loss_rows(run_dir, "Real only")
+
+    def test_load_loss_rows_reads_lora_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "run"
+            run_dir.mkdir()
+            summary = {
+                "peft": {"method": "lora"},
+                "history": {
+                    "stages": {
+                        "manifest_lora": [
+                            {
+                                "epoch_global": 1,
+                                "train_loss": 2.0,
+                                "val_loss": 3.0,
+                            }
+                        ]
+                    }
+                },
+            }
+            (run_dir / "manifest_training_summary.json").write_text(
+                json.dumps(summary),
+                encoding="utf-8",
+            )
+
+            rows = MODULE.load_loss_rows(run_dir, "Pretrain + LoRA")
+
+        self.assertEqual(rows[0]["experiment"], "Pretrain + LoRA")
+        self.assertEqual(rows[0]["val_loss"], 3.0)
+
+    def test_load_loss_rows_reads_full_finetune_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir) / "run"
+            run_dir.mkdir()
+            summary = {
+                "fine_tuning": {"method": "full"},
+                "history": {
+                    "stages": {
+                        "manifest_full_finetune": [
+                            {
+                                "epoch_global": 1,
+                                "train_loss": 0.5,
+                                "val_loss": 0.75,
+                            }
+                        ]
+                    }
+                },
+            }
+            (run_dir / "manifest_training_summary.json").write_text(
+                json.dumps(summary),
+                encoding="utf-8",
+            )
+
+            rows = MODULE.load_loss_rows(run_dir, "Pretrain + full")
+
+        self.assertEqual(rows[0]["experiment"], "Pretrain + full")
+        self.assertEqual(rows[0]["val_loss"], 0.75)
 
     def test_load_loss_rows_rejects_nonfinite_losses(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
