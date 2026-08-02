@@ -128,8 +128,27 @@ class MagneticDiagnosticsTests(unittest.TestCase):
     def test_correct_mast_level2_flux_loop_positions_maps_channels_to_geometry(self):
         payload = {
             "flux_loops": [
-                {"name": "CC03", "geometry_name": "FL_P2U_1", "position": np.array([0.7, 0.8])},
-                {"name": "P3U/1", "geometry_name": "FL_P2L_3", "position": np.array([0.9, -0.8])},
+                {
+                    "name": "CC03",
+                    "geometry_name": "FL_P2U_1",
+                    "position": np.array([0.7, 0.8]),
+                    "measurement_status": "measured",
+                    "source_signal_channel": "CC03",
+                },
+                {
+                    "name": "P3U/1",
+                    "geometry_name": "FL_P2L_3",
+                    "position": np.array([0.9, -0.8]),
+                    "measurement_status": "measured",
+                    "source_signal_channel": "P3U/1",
+                },
+                {
+                    "name": "VIRTUAL::FL_P2U_1",
+                    "geometry_name": "FL_P2U_1",
+                    "position": np.array([9.0, 9.0]),
+                    "measurement_status": "virtual",
+                    "source_signal_channel": None,
+                },
             ]
         }
         magnetics = {
@@ -144,6 +163,8 @@ class MagneticDiagnosticsTests(unittest.TestCase):
         np.testing.assert_allclose(payload["flux_loops"][0]["position"], [0.18, 0.62])
         self.assertEqual(payload["flux_loops"][1]["geometry_name"], "FL_P3U_1")
         np.testing.assert_allclose(payload["flux_loops"][1]["position"], [1.16, 1.08])
+        self.assertEqual(payload["flux_loops"][2]["geometry_name"], "FL_P2U_1")
+        np.testing.assert_allclose(payload["flux_loops"][2]["position"], [0.7, 0.8])
 
 
 if __name__ == "__main__":

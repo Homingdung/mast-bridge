@@ -85,6 +85,14 @@ class MachineFromZarrTests(unittest.TestCase):
         self.assertEqual(len(payloads["passive_coils"]), 2)
         self.assertEqual(payloads["limiter"], [{"R": 1.0, "Z": -1.0}, {"R": 1.1, "Z": 1.0}])
         self.assertEqual(payloads["magnetic_probes"]["flux_loops"][0]["name"], "CC03")
+        self.assertEqual(
+            payloads["magnetic_probes"]["flux_loops"][0]["measurement_status"],
+            "measured",
+        )
+        self.assertEqual(
+            payloads["magnetic_probes"]["flux_loops"][0]["source_signal_channel"],
+            "CC03",
+        )
         np.testing.assert_allclose(
             payloads["magnetic_probes"]["flux_loops"][0]["position"], [0.18, 0.62]
         )
@@ -92,6 +100,13 @@ class MachineFromZarrTests(unittest.TestCase):
         np.testing.assert_allclose(
             payloads["magnetic_probes"]["flux_loops"][1]["position"], [1.16, 1.08]
         )
+        self.assertEqual(len(payloads["magnetic_probes"]["flux_loops"]), 3)
+        virtual = payloads["magnetic_probes"]["flux_loops"][2]
+        self.assertEqual(virtual["name"], "VIRTUAL::FL_P2U_1")
+        self.assertEqual(virtual["geometry_name"], "FL_P2U_1")
+        self.assertEqual(virtual["measurement_status"], "virtual")
+        self.assertIsNone(virtual["source_signal_channel"])
+        np.testing.assert_allclose(virtual["position"], [0.7, 0.8])
         self.assertEqual(payloads["magnetic_probes"]["pickups"][0]["family"], "CCBV")
         pickups = payloads["magnetic_probes"]["pickups"]
         obr = next(item for item in pickups if item["family"] == "OBR")
@@ -108,6 +123,58 @@ class MachineFromZarrTests(unittest.TestCase):
             payloads = build_machine_payloads(shot)
 
         self.assertEqual([item["dR"] for item in payloads["passive_coils"]], [0.06, 0.06])
+
+    def test_maps_scalar_and_many_to_one_passive_currents_explicitly(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shot = self._fixture(Path(temp_dir))
+            passive = zarr.open_group(str(shot), mode="a")["pf_passive"]
+            passive.create_array("botcol_r", data=np.array([0.23]))
+            passive.create_array("botcol_z", data=np.array([-2.02]))
+            passive.create_array("botcol_width", data=np.array([0.05]))
+            passive.create_array("botcol_height", data=np.array([0.30]))
+            passive.create_array("botcol_geometry_channel", data=np.array(["botcol"], dtype="U6"))
+            passive.create_array("botcol_current_channel", data=np.array(["BOTCOL1", "BOTCOL2"], dtype="U7"))
+            passive.create_array("botcol_current", data=np.zeros((2, 3)))
+            passive.create_array("endcrown_l_r", data=np.array([0.16]))
+            passive.create_array("endcrown_l_z", data=np.array([-2.46]))
+            passive.create_array("endcrown_l_width", data=np.array([0.23]))
+            passive.create_array("endcrown_l_height", data=np.array([0.08]))
+            passive.create_array(
+                "endcrown_l_geometry_channel", data=np.array(["endcrown_l"], dtype="U10")
+            )
+            passive.create_array("endcrown_l_current", data=np.zeros(3))
+
+            items = build_machine_payloads(shot)["passive_coils"]
+
+        botcol = next(item for item in items if item["element"] == "botcol")
+        self.assertEqual(botcol["source_current_channels"], ["BOTCOL1", "BOTCOL2"])
+        self.assertEqual(botcol["source_current_channel"], "botcol__sum")
+        self.assertEqual(botcol["source_current_reduction"], "sum")
+        endcrown = next(item for item in items if item["element"] == "endcrown_l")
+        self.assertEqual(endcrown["source_current_channels"], ["endcrown_l"])
+        self.assertEqual(endcrown["source_current_reduction"], "identity")
+
+    def test_rejects_unverified_many_to_one_passive_current_mapping(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shot = self._fixture(Path(temp_dir))
+            passive = zarr.open_group(str(shot), mode="a")["pf_passive"]
+            passive.create_array("mystery_r", data=np.array([0.23]))
+            passive.create_array("mystery_z", data=np.array([-2.02]))
+            passive.create_array("mystery_width", data=np.array([0.05]))
+            passive.create_array("mystery_height", data=np.array([0.30]))
+            passive.create_array(
+                "mystery_geometry_channel", data=np.array(["mystery"], dtype="U7")
+            )
+            passive.create_array(
+                "mystery_current_channel",
+                data=np.array(["MYSTERY1", "MYSTERY2"], dtype="U8"),
+            )
+            passive.create_array("mystery_current", data=np.zeros((2, 3)))
+
+            with self.assertRaisesRegex(
+                ValueError, "mystery has 1 geometry elements but 2 current channels"
+            ):
+                build_machine_payloads(shot)
 
     def test_writes_expected_filenames_and_refuses_existing_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:

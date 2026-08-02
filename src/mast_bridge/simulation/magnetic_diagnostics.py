@@ -64,7 +64,16 @@ def correct_mast_level2_flux_loop_positions(
         if index < radii.size and index < verticals.size
     }
     for flux_loop in probe_payload.get("flux_loops", []):
-        geometry_name = mast_level2_flux_loop_geometry_name(str(flux_loop.get("name", "")))
+        source_channel = flux_loop.get("source_signal_channel")
+        if source_channel is not None:
+            geometry_name = mast_level2_flux_loop_geometry_name(str(source_channel))
+        elif flux_loop.get("measurement_status") == "virtual":
+            geometry_name = str(flux_loop.get("geometry_name", ""))
+        else:
+            # Compatibility with older measured-only machine pickles.
+            geometry_name = mast_level2_flux_loop_geometry_name(
+                str(flux_loop.get("name", ""))
+            )
         if geometry_name not in geometry_by_name:
             continue
         flux_loop["geometry_name"] = geometry_name

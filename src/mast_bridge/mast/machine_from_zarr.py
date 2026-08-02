@@ -25,6 +25,7 @@ ACTIVE_GROUPS = {
 
 ACTIVE_RESISTIVITY = 1.55e-8
 PASSIVE_RESISTIVITY = 7.1e-7
+PASSIVE_SUM_FAMILIES = frozenset({"botcol", "topcol"})
 
 REQUIRED_OUTPUTS = {
     "active_coils": "MAST_active_coils.pickle",
@@ -131,12 +132,45 @@ def _passive_payload(root: Any) -> list[dict[str, Any]]:
             if f"{geometry}_current_channel" in group
             else []
         )
-        for index, (r_value, z_value) in enumerate(zip(r, z)):
-            source = (
-                current_channels[index]
-                if index < len(current_channels)
-                else f"{geometry}_current_channel_{index}"
+        current_key = f"{geometry}_current"
+        if current_channels and len(current_channels) == len(r):
+            source_groups = [[str(channel)] for channel in current_channels]
+        elif (
+            current_channels
+            and len(r) == 1
+            and geometry in PASSIVE_SUM_FAMILIES
+        ):
+            # FAIR-MAST represents BOTCOL/TOPCOL as six measured currents
+            # against one shared axisymmetric geometry in the shots audited by
+            # this project.  Their sum is an explicit MAST-specific equivalent
+            # current approximation; do not generalize it to unknown families.
+            source_groups = [[str(channel) for channel in current_channels]]
+        elif current_channels:
+            raise ValueError(
+                f"{geometry} has {len(r)} geometry elements but "
+                f"{len(current_channels)} current channels"
             )
+        elif current_key in group and len(r) == 1:
+            # Scalar passive-loop signals such as ENDCROWN_L/U have no
+            # explicit current_channel coordinate in FAIR-MAST.
+            source_groups = [[geometry]]
+        elif current_key in group:
+            raise ValueError(
+                f"{geometry} has current data without an unambiguous channel mapping"
+            )
+        else:
+            source_groups = [[] for _ in r]
+        for index, (r_value, z_value) in enumerate(zip(r, z)):
+            sources = source_groups[index]
+            if len(sources) == 1:
+                effective_source = sources[0]
+                reduction = "identity"
+            elif len(sources) > 1:
+                effective_source = f"{geometry}__sum"
+                reduction = "sum"
+            else:
+                effective_source = f"{geometry}__zero"
+                reduction = "zero"
             payload.append(
                 {
                     "R": r_value,
@@ -147,7 +181,9 @@ def _passive_payload(root: Any) -> list[dict[str, Any]]:
                     "element": geometry,
                     "name": str(channels[index]) if index < len(channels) else f"{geometry}_{index}",
                     "efitGroup": geometry,
-                    "source_current_channel": str(source),
+                    "source_current_channel": effective_source,
+                    "source_current_channels": sources,
+                    "source_current_reduction": reduction,
                     "shapeAngle1": angle1[index] if len(angle1) > 1 else angle1[0],
                     "shapeAngle2": angle2[index] if len(angle2) > 1 else angle2[0],
                 }
@@ -164,32 +200,63 @@ def _magnetic_probe_payload(root: Any) -> dict[str, list[dict[str, Any]]]:
     r = _values(group, "flux_loop_r")
     z = _values(group, "flux_loop_z")
 
+    if len(geometry_channels) != len(r) or len(geometry_channels) != len(z):
+        raise ValueError(
+            "Flux-loop geometry channel, R, and Z arrays have different lengths"
+        )
+    geometry_names = [str(name) for name in geometry_channels]
+    if len(set(geometry_names)) != len(geometry_names):
+        raise ValueError("flux_loop_geometry_channel contains duplicate names")
+
     # flux_loop_channel is the measured subset; flux_loop_geometry_channel is
-    # the full geometry list. Join them by normalized name, not by index.
+    # the full geometry list. Join measured signals by normalized name, then
+    # retain every remaining geometry as an explicitly named virtual diagnostic.
+    # This gives FreeGSNKE all available MAST locations without allowing the
+    # geometry-only probes to masquerade as experimental measurements.
     geometry_by_name = {
         str(name): np.array([r[index], z[index]])
         for index, name in enumerate(geometry_channels)
-        if index < len(r) and index < len(z)
     }
 
     def flux_loop_geometry_name(channel: Any) -> str:
         return "FL_" + str(channel).replace("/", "_")
 
-    flux_loops = [
-        {
-            "name": str(channels[index]) if index < len(channels) else f"flux_loop_channel_{index}",
-            "geometry_name": flux_loop_geometry_name(channels[index])
-            if index < len(channels)
-            else str(geometry_channels[index]),
-            "position": geometry_by_name.get(
-                flux_loop_geometry_name(channels[index]),
-                np.array([r[index], z[index]]),
+    flux_loops: list[dict[str, Any]] = []
+    measured_geometry_names: set[str] = set()
+    for channel in channels:
+        signal_channel = str(channel)
+        geometry_name = flux_loop_geometry_name(channel)
+        if geometry_name not in geometry_by_name:
+            raise ValueError(
+                f"No flux-loop geometry {geometry_name!r} for measured channel {channel!r}"
             )
-            if index < len(channels)
-            else np.array([r[index], z[index]]),
-        }
-        for index in range(len(r))
-    ]
+        if geometry_name in measured_geometry_names:
+            raise ValueError(
+                f"Multiple measured flux-loop channels map to geometry {geometry_name!r}"
+            )
+        measured_geometry_names.add(geometry_name)
+        flux_loops.append(
+            {
+                "name": signal_channel,
+                "geometry_name": geometry_name,
+                "position": geometry_by_name[geometry_name].copy(),
+                "measurement_status": "measured",
+                "source_signal_channel": signal_channel,
+            }
+        )
+
+    for geometry_name in geometry_names:
+        if geometry_name in measured_geometry_names:
+            continue
+        flux_loops.append(
+            {
+                "name": f"VIRTUAL::{geometry_name}",
+                "geometry_name": geometry_name,
+                "position": geometry_by_name[geometry_name].copy(),
+                "measurement_status": "virtual",
+                "source_signal_channel": None,
+            }
+        )
 
     pickups: list[dict[str, Any]] = []
     pickup_specs = (
