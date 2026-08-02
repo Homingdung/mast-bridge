@@ -14,6 +14,10 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ForwardScriptTests(unittest.TestCase):
+    class _Group(dict):
+        def array_keys(self):
+            return self.keys()
+
     def test_select_fit_row_matches_shot_and_nearest_time(self):
         fit = {
             "shot": np.array(["11766", "11767", "11766"]),
@@ -94,6 +98,54 @@ class ForwardScriptTests(unittest.TestCase):
 
         self.assertEqual(scaled["active"], {"P2": 15.0, "SOL": -3.0})
         self.assertEqual(scaled["passive"], {"MID1": 0.75})
+
+    def test_passive_source_currents_include_scalar_and_channel_arrays(self):
+        group = self._Group(
+            time=np.array([0.0, 1.0]),
+            botcol_current_channel=np.array(["BOTCOL1", "BOTCOL2"]),
+            botcol_current=np.array([[10.0, 20.0], [30.0, 50.0]]),
+            endcrown_l_current=np.array([4.0, 8.0]),
+        )
+
+        currents = MODULE.passive_source_currents_at_time(group, 0.5, current_scale=2.0)
+
+        self.assertEqual(currents, {"BOTCOL1": 30.0, "BOTCOL2": 80.0, "endcrown_l": 12.0})
+
+    def test_effective_passive_current_supports_identity_sum_and_zero(self):
+        sources = {"MID1": 2.0, "BOTCOL1": 3.0, "BOTCOL2": 5.0}
+        self.assertEqual(
+            MODULE.effective_passive_current(
+                {
+                    "source_current_channel": "MID1",
+                    "source_current_channels": ["MID1"],
+                    "source_current_reduction": "identity",
+                },
+                sources,
+            ),
+            2.0,
+        )
+        self.assertEqual(
+            MODULE.effective_passive_current(
+                {
+                    "source_current_channel": "botcol__sum",
+                    "source_current_channels": ["BOTCOL1", "BOTCOL2"],
+                    "source_current_reduction": "sum",
+                },
+                sources,
+            ),
+            8.0,
+        )
+        self.assertEqual(
+            MODULE.effective_passive_current(
+                {
+                    "source_current_channel": "coil_cases__zero",
+                    "source_current_channels": [],
+                    "source_current_reduction": "zero",
+                },
+                sources,
+            ),
+            0.0,
+        )
 
     def test_equilibrium_grid_bounds_use_real_mast_grid_arrays(self):
         equilibrium = {

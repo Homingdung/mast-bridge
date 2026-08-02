@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import io
 import json
 import pickle
 import re
+import resource
 import shutil
 import sys
 import tempfile
@@ -303,6 +305,170 @@ def scale_current_dicts(
     }
 
 
+def passive_source_currents_at_time(
+    passive_group: Any,
+    target_time: float,
+    current_scale: float = 1.0,
+) -> dict[str, float]:
+    """Interpolate every measured passive-loop current at one time.
+
+    FAIR-MAST stores most passive currents as ``[channel, time]`` arrays, but
+    scalar loops such as ``endcrown_l``/``endcrown_u`` have no channel
+    coordinate.  Treat those family names as stable source-channel keys.
+    """
+    import numpy as np
+
+    times = np.asarray(passive_group["time"][:], dtype=float)
+    currents: dict[str, float] = {}
+    for current_key in sorted(passive_group.array_keys()):
+        if not current_key.endswith("_current"):
+            continue
+        family = current_key.removesuffix("_current")
+        values = np.asarray(passive_group[current_key][:], dtype=float)
+        channel_key = f"{family}_current_channel"
+        if channel_key in passive_group:
+            channels = [str(value) for value in passive_group[channel_key][:]]
+            if values.ndim == 1:
+                rows = values[None, :]
+            elif values.ndim == 2 and values.shape[1] == times.size:
+                rows = values
+            elif values.ndim == 2 and values.shape[0] == times.size:
+                rows = values.T
+            else:
+                raise ValueError(
+                    f"Passive current {current_key} shape {values.shape} "
+                    f"does not align with time axis {times.size}"
+                )
+            if rows.shape[0] != len(channels):
+                raise ValueError(
+                    f"Passive current {current_key} has {rows.shape[0]} rows "
+                    f"but {len(channels)} channels"
+                )
+        else:
+            if values.ndim == 1:
+                rows = values[None, :]
+            elif values.ndim == 2 and values.shape[0] == 1:
+                rows = values
+            elif values.ndim == 2 and values.shape[1] == 1:
+                rows = values.T
+            else:
+                raise ValueError(
+                    f"Passive current {current_key} has no channel coordinate "
+                    f"and ambiguous shape {values.shape}"
+                )
+            channels = [family]
+
+        for channel, row in zip(channels, rows, strict=True):
+            value = float(at_time(times, row, target_time)) * float(current_scale)
+            if not np.isfinite(value):
+                raise ValueError(
+                    f"Passive current {channel!r} is non-finite at {target_time}"
+                )
+            currents[channel] = value
+    return currents
+
+
+def effective_passive_current(
+    item: dict[str, Any], source_currents: dict[str, float]
+) -> float:
+    """Resolve one FreeGSNKE passive element's explicit current mapping."""
+    sources = item.get("source_current_channels")
+    if sources is None:
+        sources = [item["source_current_channel"]]
+    sources = [str(source) for source in sources]
+    reduction = str(item.get("source_current_reduction", "identity"))
+    if reduction == "zero":
+        return 0.0
+    missing = [source for source in sources if source not in source_currents]
+    if missing:
+        raise KeyError(f"Passive current sources are missing: {missing}")
+    values = [float(source_currents[source]) for source in sources]
+    if reduction == "identity" and len(values) == 1:
+        return values[0]
+    if reduction == "sum" and values:
+        return float(sum(values))
+    raise ValueError(
+        f"Invalid passive current mapping reduction={reduction!r}, sources={sources!r}"
+    )
+
+
+def machine_geometry_policy(machine_dir: Path) -> dict[str, Any]:
+    """Describe the lossy MAST-to-FreeGSNKE geometry/current conversion."""
+    from mast_bridge.mast.machine_config import MachineGeometry
+
+    machine = MachineGeometry.load(machine_dir)
+    with machine.files["passive_coils"].open("rb") as handle:
+        passive_payload = pickle.load(handle)
+    with machine.files["magnetic_probes"].open("rb") as handle:
+        magnetic_probe_payload = pickle.load(handle)
+    reductions: dict[str, int] = {}
+    many_to_one: list[dict[str, Any]] = []
+    for item in passive_payload:
+        reduction = str(item.get("source_current_reduction", "identity"))
+        reductions[reduction] = reductions.get(reduction, 0) + 1
+        sources = [str(value) for value in item.get("source_current_channels", [])]
+        if reduction == "sum":
+            many_to_one.append(
+                {
+                    "element": str(item.get("element", item.get("name", ""))),
+                    "effective_channel": str(item["source_current_channel"]),
+                    "source_channels": sources,
+                    "status": "empirically_validated_approximation",
+                }
+            )
+    flux_loop_status_counts: dict[str, int] = {}
+    for item in magnetic_probe_payload.get("flux_loops", []):
+        status = str(item.get("measurement_status", "unspecified"))
+        flux_loop_status_counts[status] = flux_loop_status_counts.get(status, 0) + 1
+    return {
+        "device": "MAST",
+        "source": "per-shot FAIR-MAST Level-2 MAST Zarr",
+        "freegsnke_default_mast_u_geometry_used": False,
+        "passive_current_reduction_counts": reductions,
+        "passive_many_to_one": many_to_one,
+        "passive_many_to_one_reduction": "sum",
+        "passive_many_to_one_status": "empirically_validated_approximation",
+        "passive_unmeasured_current_policy": "zero_unmeasured",
+        "passive_shape_angles_stored": True,
+        "passive_shape_angles_applied_by_freegsnke_scalar_geometry": False,
+        "wall_policy": "MAST limiter contour reused because no independent vessel-wall contour is present",
+        "flux_loop_policy": (
+            "retain all MAST geometries; measured channels are name-joined and "
+            "geometry-only locations are explicit virtual diagnostics"
+        ),
+        "flux_loop_status_counts": flux_loop_status_counts,
+        "virtual_flux_loop_name_prefix": "VIRTUAL::",
+    }
+
+
+def memory_provenance() -> dict[str, Any]:
+    """Return Linux process/cgroup memory facts without allocating large buffers."""
+    result: dict[str, Any] = {
+        "process_peak_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
+    }
+    cgroup = Path("/sys/fs/cgroup")
+    for filename, key in (
+        ("memory.max", "cgroup_memory_max_bytes"),
+        ("memory.current", "cgroup_memory_current_bytes"),
+    ):
+        try:
+            value = (cgroup / filename).read_text(encoding="utf-8").strip()
+            result[key] = None if value == "max" else int(value)
+        except (OSError, ValueError):
+            result[key] = None
+    try:
+        result["cgroup_memory_events"] = {
+            key: int(value)
+            for key, value in (
+                line.split(maxsplit=1)
+                for line in (cgroup / "memory.events").read_text(encoding="utf-8").splitlines()
+            )
+        }
+    except (OSError, ValueError):
+        result["cgroup_memory_events"] = None
+    return result
+
+
 def _apply_currents(
     tokamak: Any,
     shot: Any,
@@ -340,33 +506,29 @@ def _apply_currents(
         tokamak.set_coil_current(coil_name, active_at_time[channel])
 
     passive_group = shot["pf_passive"]
-    passive_at_time: dict[str, float] = {}
-    for key in passive_group.array_keys():
-        if not key.endswith("_current_channel"):
-            continue
-        family = key.removesuffix("_current_channel")
-        current_key = f"{family}_current"
-        if current_key not in passive_group:
-            continue
-        channels = [str(value) for value in passive_group[key][:]]
-        values = np.asarray(passive_group[current_key][:])
-        if values.ndim == 1:
-            values = values[None, :]
-        for channel, row in zip(channels, values):
-            passive_at_time[channel] = float(
-                at_time(passive_group["time"][:], row, target_time)
-            ) * float(current_scale)
+    passive_source_at_time = passive_source_currents_at_time(
+        passive_group, target_time, current_scale=current_scale
+    )
 
     passive_payload = pickle.load(machine.files["passive_coils"].open("rb"))
+    passive_effective_at_time: dict[str, float] = {}
     for item in passive_payload:
-        channel = item["source_current_channel"]
+        channel = str(item["source_current_channel"])
         name = item["name"]
-        if name in tokamak.coil_names and channel in passive_at_time:
-            tokamak.set_coil_current(name, passive_at_time[channel])
+        value = effective_passive_current(item, passive_source_at_time)
+        previous = passive_effective_at_time.get(channel)
+        if previous is not None and not np.isclose(previous, value):
+            raise ValueError(
+                f"Effective passive channel {channel!r} has inconsistent values"
+            )
+        passive_effective_at_time[channel] = value
+        if name in tokamak.coil_names:
+            tokamak.set_coil_current(name, value)
 
     return {
         "active": {name: float(value) for name, value in active_at_time.items()},
-        "passive": passive_at_time,
+        "passive": passive_effective_at_time,
+        "passive_source": passive_source_at_time,
     }
 
 
@@ -472,6 +634,10 @@ def main(argv: list[str] | None = None) -> int:
         raise FileNotFoundError(f"Lao fit file not found: {fit_path}")
 
     solve_machine_dir = _copy_machine_with_positive_widths(machine_dir)
+    cleanup_solve_machine = lambda: shutil.rmtree(  # noqa: E731
+        solve_machine_dir, ignore_errors=True
+    )
+    atexit.register(cleanup_solve_machine)
     tokamak = build_machine(MachineGeometry.load(solve_machine_dir))
     shot = zarr.open_group(str(shot_path), mode="r")
     currents = _apply_currents(
@@ -526,21 +692,30 @@ def main(argv: list[str] | None = None) -> int:
         max_iterations=args.max_iterations,
     )
     topology_diagnostics = equilibrium_topology_diagnostics(eq)
+    geometry_policy = machine_geometry_policy(machine_dir)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         output_dir / "equilibrium.npz",
+        schema_version=np.asarray(1, dtype=np.int16),
         psi=eq.psi(),
         R=eq.R,
         Z=eq.Z,
         psi_axis=eq.psi_axis,
         psi_bndry=eq.psi_bndry,
+        axis_order=np.asarray(["R", "Z"]),
+        psi_units=np.asarray("Wb/rad"),
+        R_units=np.asarray("m"),
+        Z_units=np.asarray("m"),
+        psi_convention=np.asarray("FreeGS poloidal flux per radian; COCOS ID unspecified"),
     )
     image_path = save_equilibrium_plot(
         eq, solve_machine_dir, output_dir, str(args.shot), args.target_time
     )
     metadata = {
+        "schema_version": 1,
         "source": "synthetic",
+        "device": "MAST",
         "parent_shot": str(args.shot),
         "target_time": args.target_time,
         "fitted_time": fitted_time,
@@ -554,6 +729,20 @@ def main(argv: list[str] | None = None) -> int:
         "lao85_perturbation": lao85_parameters["perturbation"],
         "coil_current_scale": args.coil_current_scale,
         "grid": {"nx": args.nx, "ny": args.ny, **grid_bounds},
+        "equilibrium_array_schema": {
+            "axis_order": ["R", "Z"],
+            "psi_units": "Wb/rad",
+            "R_units": "m",
+            "Z_units": "m",
+            "cocos": None,
+            "psi_sign": "FreeGS convention; not assigned an authoritative COCOS ID",
+        },
+        "machine_geometry_policy": geometry_policy,
+        "source_zarr_group_revisions": {
+            name: shot[name].attrs.get("commit_url")
+            for name in ("equilibrium", "magnetics", "pf_active", "pf_passive", "wall")
+        },
+        "memory": memory_provenance(),
         "target_relative_tolerance": args.tolerance,
         "max_solving_iterations": args.max_iterations,
         "plot_path": str(image_path),
@@ -576,6 +765,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"equilibrium: {output_dir / 'equilibrium.npz'}")
     print(f"metadata: {output_dir / 'metadata.json'}")
     print(f"plot: {image_path}")
+    cleanup_solve_machine()
+    atexit.unregister(cleanup_solve_machine)
     return 0
 
 

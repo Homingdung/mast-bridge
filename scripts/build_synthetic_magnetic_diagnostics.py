@@ -116,6 +116,9 @@ def apply_saved_currents(
         channel = str(item["source_current_channel"])
         if name not in tokamak.coil_names:
             continue
+        if channel not in passive and item.get("source_current_reduction") == "zero":
+            tokamak.set_coil_current(name, 0.0)
+            continue
         if channel not in passive:
             raise KeyError(f"Saved passive current is missing channel {channel!r}")
         tokamak.set_coil_current(name, passive[channel])
