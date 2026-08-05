@@ -105,8 +105,11 @@ def build_forward_command(
     ]
 
 
-def run_subprocess(command: list[str]) -> int:
-    return subprocess.run(command, check=False).returncode
+def run_subprocess(command: list[str], timeout: float | None = None) -> int:
+    try:
+        return subprocess.run(command, check=False, timeout=timeout).returncode
+    except subprocess.TimeoutExpired:
+        return 1
 
 
 def enrich_metadata(output_dir: Path, row: dict[str, str], command: list[str]) -> None:
@@ -261,13 +264,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="JSONL status report; default is <manifest-dir>/<prefix>_batch_report.jsonl.",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="Per-solve wall-clock timeout in seconds; timed-out rows are marked failed.",
+    )
     return parser
 
 
 def main(
     argv: list[str] | None = None,
     *,
-    run_command: Callable[[list[str]], int] = run_subprocess,
+    run_command: Callable[[list[str], float | None], int] = run_subprocess,
 ) -> int:
     args = build_parser().parse_args(argv)
     rows = read_variant_rows(args.variant_csv)
@@ -314,27 +323,36 @@ def main(
             and (output_dir / "equilibrium.npz").is_file()
             and (output_dir / "metadata.json").is_file()
         ):
-            validate_existing_output(
-                output_dir,
-                row,
-                nx=args.nx,
-                ny=args.ny,
-                tolerance=args.tolerance,
-                max_iterations=args.max_iterations,
-            )
-            print(f"[skip] row={row_index} sample={sample_id} existing output", flush=True)
-            report_rows.append(
-                {
-                    **row,
-                    "row_index": str(row_index),
-                    "sample_id": sample_id,
-                    "output_dir": str(output_dir),
-                    "batch_status": "solved",
-                    "return_code": "0",
-                }
-            )
-            write_batch_report(report_path, report_rows)
-            continue
+            try:
+                validate_existing_output(
+                    output_dir,
+                    row,
+                    nx=args.nx,
+                    ny=args.ny,
+                    tolerance=args.tolerance,
+                    max_iterations=args.max_iterations,
+                )
+            except ValueError:
+                clear_generated_sample_outputs(output_dir)
+                print(
+                    f"[skip-invalid] row={row_index} sample={sample_id} "
+                    "existing output invalid; re-solving",
+                    flush=True,
+                )
+            else:
+                print(f"[skip] row={row_index} sample={sample_id} existing output", flush=True)
+                report_rows.append(
+                    {
+                        **row,
+                        "row_index": str(row_index),
+                        "sample_id": sample_id,
+                        "output_dir": str(output_dir),
+                        "batch_status": "solved",
+                        "return_code": "0",
+                    }
+                )
+                write_batch_report(report_path, report_rows)
+                continue
         if args.rerun_existing:
             clear_generated_sample_outputs(output_dir)
 
@@ -343,7 +361,7 @@ def main(
             f"shot={row['shot']} time={row['target_time']} variant={row['variant_id']}",
             flush=True,
         )
-        return_code = run_command(command)
+        return_code = run_command(command, timeout=args.timeout)
         if return_code == 0:
             enrich_metadata(output_dir, row, command)
             status = "solved"

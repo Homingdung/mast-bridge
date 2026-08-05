@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 from dataclasses import dataclass
@@ -367,7 +368,13 @@ def diagnostic_feature_names(rows: Iterable[dict[str, Any]]) -> list[str]:
 
 def diagnostic_feature_vector(row: dict[str, Any], feature_names: list[str]) -> np.ndarray:
     values = _diagnostic_values(row)
-    vector = np.asarray([values.get(name, np.nan) for name in feature_names], dtype=np.float32)
+    entries = []
+    for name in feature_names:
+        if name not in values and name.startswith("coil_active_"):
+            entries.append(0.0)
+        else:
+            entries.append(values.get(name, np.nan))
+    vector = np.asarray(entries, dtype=np.float32)
     if not np.isfinite(vector).all():
         bad = [feature_names[index] for index in np.flatnonzero(~np.isfinite(vector))]
         raise ValueError(f"Non-finite diagnostic features for {row.get('sample_id')!r}: {bad}")
@@ -420,6 +427,8 @@ class ManifestWindowDataset:
     input_std: np.ndarray
     output_mean: np.ndarray
     output_std: np.ndarray
+    features: np.ndarray = None
+    targets: np.ndarray = None
     target_mode: str = TARGET_RAW_PSI
     input_mode: str = INPUT_LAO_PARAMS
 
@@ -435,6 +444,8 @@ class ManifestWindowDataset:
         output_std: np.ndarray | None = None,
         target_mode: str = TARGET_RAW_PSI,
         input_mode: str = INPUT_LAO_PARAMS,
+        cached_features: np.ndarray | None = None,
+        cached_targets: np.ndarray | None = None,
     ) -> "ManifestWindowDataset":
         if not rows:
             raise ValueError("ManifestWindowDataset requires at least one row")
@@ -444,18 +455,39 @@ class ManifestWindowDataset:
             raise ValueError(f"Unknown input_mode {input_mode!r}; expected one of {sorted(INPUT_MODES)}")
 
         features = feature_names or _feature_names(rows, input_mode)
-        input_matrix = np.stack([_feature_vector(row, features, input_mode) for row in rows], axis=0)
-        output_matrix = np.stack([_psi_for_row(row, target_mode).reshape(-1) for row in rows], axis=0)
+        if cached_features is not None and cached_targets is not None:
+            if len(cached_features) != len(rows) or len(cached_targets) != len(rows):
+                raise ValueError("Cached dataset size does not match rows")
+            input_matrix = cached_features
+            output_matrix = cached_targets
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
+                feature_vectors = list(
+                    pool.map(lambda row: _feature_vector(row, features, input_mode), rows)
+                )
+                psi_vectors = list(
+                    pool.map(lambda row: _psi_for_row(row, target_mode).reshape(-1), rows)
+                )
+            input_matrix = np.stack(feature_vectors, axis=0)
+            output_matrix = np.stack(psi_vectors, axis=0)
 
+        input_mean = np.asarray(input_mean if input_mean is not None else input_matrix.mean(axis=0), dtype=np.float32)
+        input_std = np.asarray(input_std if input_std is not None else input_matrix.std(axis=0), dtype=np.float32)
+        output_mean = np.asarray(
+            output_mean if output_mean is not None else output_matrix.mean(axis=0), dtype=np.float32
+        )
+        output_std = np.asarray(
+            output_std if output_std is not None else output_matrix.std(axis=0), dtype=np.float32
+        )
         return cls(
             rows=list(rows),
             feature_names=list(features),
-            input_mean=np.asarray(input_mean if input_mean is not None else input_matrix.mean(axis=0), dtype=np.float32),
-            input_std=np.asarray(input_std if input_std is not None else input_matrix.std(axis=0), dtype=np.float32),
-            output_mean=np.asarray(
-            output_mean if output_mean is not None else output_matrix.mean(axis=0), dtype=np.float32
-            ),
-            output_std=np.asarray(output_std if output_std is not None else output_matrix.std(axis=0), dtype=np.float32),
+            input_mean=input_mean,
+            input_std=input_std,
+            output_mean=output_mean,
+            output_std=output_std,
+            features=_standardize(input_matrix, input_mean, input_std).astype(np.float32),
+            targets=_standardize(output_matrix, output_mean, output_std).astype(np.float32),
             target_mode=target_mode,
             input_mode=input_mode,
         )
@@ -465,9 +497,8 @@ class ManifestWindowDataset:
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         row = self.rows[index]
-        features = _standardize(_feature_vector(row, self.feature_names, self.input_mode), self.input_mean, self.input_std)
-        psi = _standardize(_psi_for_row(row, self.target_mode).reshape(-1), self.output_mean, self.output_std)
-
+        features = self.features[index]
+        psi = self.targets[index]
         return {
             "shot_id": str(row.get("shot_id") or row.get("sample_id") or index),
             "window_index": int(index),
@@ -484,6 +515,23 @@ class ManifestWindowDataset:
         }
 
 
+def _load_dataset_cache(cache_path: str | Path, rows: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray] | None:
+    """Load pre-extracted (features, psi) matrices when sample order matches."""
+    import os
+
+    path = Path(cache_path).expanduser().resolve()
+    if not path.is_file():
+        return None
+    with np.load(path, allow_pickle=False) as data:
+        cached_ids = [str(value) for value in data["sample_ids"].tolist()]
+        row_ids = [str(row.get("sample_id")) for row in rows]
+        if cached_ids != row_ids:
+            return None
+        features = np.asarray(data["features"], dtype=np.float32)
+        psi = np.asarray(data["psi"], dtype=np.float32)
+    return features, psi
+
+
 def build_manifest_datasets(
     rows: list[dict[str, Any]],
     *,
@@ -493,6 +541,7 @@ def build_manifest_datasets(
     target_mode: str = TARGET_RAW_PSI,
     input_mode: str = INPUT_LAO_PARAMS,
     feature_names: list[str] | None = None,
+    cache_path: str | Path | None = None,
 ) -> tuple[ManifestWindowDataset, ManifestWindowDataset]:
     """Build train/validation datasets with shared feature and normalization statistics."""
     if not 0.0 < val_fraction < 1.0:
@@ -533,6 +582,34 @@ def build_manifest_datasets(
         raise ValueError("Validation split is empty")
 
     resolved_feature_names = feature_names or _feature_names(rows, input_mode)
+    cached = _load_dataset_cache(cache_path, rows) if cache_path else None
+    if cached is not None:
+        cache_features, cache_psi = cached
+        all_rows = rows
+        train_index = {id(row): i for i, row in enumerate(all_rows)}
+        train_idx = [train_index[id(r)] for r in train_rows]
+        val_idx = [train_index[id(r)] for r in val_rows]
+        base = ManifestWindowDataset.from_rows(
+            train_rows,
+            feature_names=resolved_feature_names,
+            target_mode=target_mode,
+            input_mode=input_mode,
+            cached_features=cache_features[train_idx],
+            cached_targets=cache_psi[train_idx],
+        )
+        val = ManifestWindowDataset.from_rows(
+            val_rows,
+            feature_names=resolved_feature_names,
+            input_mean=base.input_mean,
+            input_std=base.input_std,
+            output_mean=base.output_mean,
+            output_std=base.output_std,
+            target_mode=target_mode,
+            input_mode=input_mode,
+            cached_features=cache_features[val_idx],
+            cached_targets=cache_psi[val_idx],
+        )
+        return base, val
     base = ManifestWindowDataset.from_rows(
         train_rows,
         feature_names=resolved_feature_names,

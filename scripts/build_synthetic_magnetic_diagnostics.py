@@ -59,6 +59,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--sample-id", action="append", default=[])
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--noise-profile",
+        type=Path,
+        default=None,
+        help="JSON mapping feature name -> noise sigma (physical units); adds Gaussian noise.",
+    )
+    parser.add_argument(
+        "--noise-seed",
+        type=int,
+        default=0,
+        help="Base seed; per-sample seed derived deterministically from sample_id.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -235,6 +247,43 @@ def _reconstruct_equilibrium(
     return eq
 
 
+def _add_noise(
+    *,
+    row: dict[str, Any],
+    flux_loop_names: Any,
+    flux_loop_values: Any,
+    pickup_names: Any,
+    pickup_families: Any,
+    pickup_values: Any,
+    active_coil_currents: dict[str, float],
+    magnetics_ip: float,
+    noise_profile: dict[str, float],
+    noise_seed: int,
+) -> tuple[Any, Any, Any, dict[str, float], float]:
+    import zlib
+
+    def rng_for(sample_id: str) -> Any:
+        import numpy as np
+
+        seed = (int(noise_seed) + zlib.crc32(sample_id.encode("utf-8"))) & 0xFFFFFFFF
+        return np.random.default_rng(seed)
+
+    rng = rng_for(str(row["sample_id"]))
+    flux_values = [float(v) + float(noise_profile.get(f"flux_loop_{name}", 0.0)) * rng.standard_normal() for name, v in zip(flux_loop_names, flux_loop_values)]
+    pickup_values = [
+        float(v)
+        + float(noise_profile.get(f"pickup_{family}_{name}", 0.0)) * rng.standard_normal()
+        for family, name, v in zip(pickup_families, pickup_names, pickup_values)
+    ]
+    active = {
+        name: float(v)
+        + float(noise_profile.get(f"coil_active_{name}", 0.0)) * rng.standard_normal()
+        for name, v in active_coil_currents.items()
+    }
+    noisy_ip = float(magnetics_ip) + float(noise_profile.get("magnetics_ip", 0.0)) * rng.standard_normal()
+    return flux_values, pickup_values, active, noisy_ip
+
+
 def _write_row_diagnostics(
     row: dict[str, Any],
     *,
@@ -243,6 +292,8 @@ def _write_row_diagnostics(
     passive_payload: list[dict[str, Any]],
     output_name: str,
     initialise_probes: bool,
+    noise_profile: dict[str, float] | None = None,
+    noise_seed: int = 0,
 ) -> tuple[Path, bool, float]:
     from mast_bridge.simulation.magnetic_diagnostics import (
         LEVEL2_FLUX_LOOP_SCALE,
@@ -265,17 +316,34 @@ def _write_row_diagnostics(
     pickups = modeled_pickup_signals(tokamak, eq)
     if pickups.families is None:
         raise ValueError("FreeGSNKE pickup payload is missing probe family labels")
+    flux_values = flux_loops.values
+    pickup_values = pickups.values
+    active_currents = dict(row["coil_currents"]["active"])
+    ip_value = float(row["Ip"])
+    if noise_profile:
+        flux_values, pickup_values, active_currents, ip_value = _add_noise(
+            row=row,
+            flux_loop_names=flux_loops.names,
+            flux_loop_values=flux_values,
+            pickup_names=pickups.names,
+            pickup_families=pickups.families,
+            pickup_values=pickup_values,
+            active_coil_currents=active_currents,
+            magnetics_ip=ip_value,
+            noise_profile=noise_profile,
+            noise_seed=noise_seed,
+        )
     output = Path(row["data_path"]).expanduser().resolve() / output_name
     write_synthetic_diagnostics(
         output,
         target_time=float(row["target_time"]),
-        magnetics_ip=float(row["Ip"]),
+        magnetics_ip=ip_value,
         flux_loop_names=flux_loops.names,
-        flux_loop_values=flux_loops.values,
+        flux_loop_values=flux_values,
         pickup_names=pickups.names,
         pickup_families=pickups.families,
-        pickup_values=pickups.values,
-        active_coil_currents=row["coil_currents"]["active"],
+        pickup_values=pickup_values,
+        active_coil_currents=active_currents,
         flux_loop_scale=LEVEL2_FLUX_LOOP_SCALE,
     )
     return output, True, float(eq.synthetic_reconstruction_error)
@@ -313,6 +381,12 @@ def main(argv: list[str] | None = None) -> int:
     from mast_bridge.simulation.freegsnke_runner import build_machine
 
     import zarr
+    import json
+
+    noise_profile = None
+    if args.noise_profile is not None:
+        noise_profile = json.loads(args.noise_profile.read_text(encoding="utf-8"))
+        print(f"noise_profile: {len(noise_profile)} features, seed={args.noise_seed}")
 
     data_dir = args.data_dir.expanduser().resolve()
     report_rows: list[dict[str, Any]] = []
@@ -371,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
                         passive_payload=passive_payload,
                         output_name=args.output_name,
                         initialise_probes=not probes_initialised,
+                        noise_profile=noise_profile,
+                        noise_seed=args.noise_seed,
                     )
                     probes_initialised = True
                     generated += 1

@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument(
+        "--dataset-cache",
+        type=Path,
+        default=None,
+        help="Optional npz cache of pre-extracted (features, psi) matrices for the manifest.",
+    )
+    parser.add_argument(
         "--feature-schema",
         type=Path,
         default=None,
@@ -373,6 +379,9 @@ def _train(
         args=args,
         train_dataset=train_dataset,
     )
+    if torch.cuda.is_available():
+        model = model.cuda()
+        print(f"cuda: model moved to {torch.cuda.get_device_name(0)}", flush=True)
 
     collate = MMTCollate(
         {
@@ -491,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
         input_mode=str(args.input_mode),
         target_mode=str(args.target_mode),
         feature_names=feature_names,
+        cache_path=args.dataset_cache,
     )
 
     print(_summary(rows, train_dataset, val_dataset, str(args.input_mode), str(args.target_mode)))

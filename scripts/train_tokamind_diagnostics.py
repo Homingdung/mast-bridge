@@ -64,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
     parser.add_argument("--val-fraction", type=float, default=0.2)
+    parser.add_argument(
+        "--val-fraction-only",
+        action="store_true",
+        help="Split train/val by seeded shot-based val_fraction instead of fixed val shots.",
+    )
     parser.add_argument("--val-shot", action="append", default=None)
     parser.add_argument("--seed", type=int, default=54)
     parser.add_argument("--epochs", type=int, default=50)
@@ -150,8 +155,14 @@ def _manifest_args(args: argparse.Namespace) -> list[str]:
                     str(args.lora_alpha),
                 ]
             )
-    for shot in args.val_shot or DEFAULT_VAL_SHOTS:
-        forwarded.extend(["--val-shot", str(shot)])
+    if args.val_shot:
+        for shot in args.val_shot:
+            forwarded.extend(["--val-shot", str(shot)])
+    elif args.val_fraction_only:
+        forwarded.extend(["--val-fraction", str(args.val_fraction)])
+    else:
+        for shot in DEFAULT_VAL_SHOTS:
+            forwarded.extend(["--val-shot", str(shot)])
     if args.dry_run:
         forwarded.append("--dry-run")
     return forwarded
