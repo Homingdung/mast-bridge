@@ -1,18 +1,20 @@
 # paper_artifacts/EXPERIMENTS.md —— 实验总览（新会话从这里开始读）
 
 > **一句话**：同一任务（69 维磁诊断 → 65×65 psi 场，Transformer d64/2/4/128），检验「合成数据预训练
-> + 全量微调 (C) vs real 数据从零训练 (A)」在两种数据划分下的价值：
+> + 全量微调 (C) vs real 数据从零训练 (A)」在三种数据划分下的价值：
 > **Temporal split（时间外推 M5-M7→M8→M9）= 全档正收益且随稀缺单调**（100%→1%：+11.4→+64.0%，30/30 seed 全正）；
-> **Random split（逐炮随机）= 仅稀缺档正收益**（5% +13.7%、1% +36.1%，25-100% 为 −2~−6%）→ 论文"场景依赖"核心证据。
+> **Random split（逐炮随机）= 仅稀缺档正收益**（5% +13.7%、1% +36.1%，25-100% 为 −2~−6%）；
+> **Shape-OOD（未见 diverted 几何）= 稀缺 Real 数据时收益最大**（Test-OOD-only、NEW 1%：+57.6%；Historical 5%：+30.0%）→ 论文"场景依赖"核心证据。
 > 本文件 = 精简速览；数值直接来自归档 eval json。逐 run 历史（best@ep/停@ep/best_val）在各 run
 > `manifest_training_summary.json` / `checkpoints/best/meta.json`；原始实验日志 = 项目根 `progress2.md` §45–§55。
 
-## 1. 目录地图（两个归档，均自包含：checkpoint + eval + test + dataset_split）
+## 1. 目录地图（三个归档）
 
 | 路径 | 内容 |
 |---|---|
 | `temporal_full/` | temporal 全 5 档：33 ckpt + 21 eval json + M9 test（17,498 点/507 炮）|
 | `random/` | random 全 5 档 × 3 噪声臂：64 ckpt + 61 eval json + test（21,350 点/730 炮）|
+| `shape_ood/` | diverted Shape-OOD：frozen split、Test-OOD-only（19,009 slices）、30 个 A/C eval JSON；大型 checkpoint/cache 不提交 |
 | `temporal_full/checkpoints/<run>/` | 每 run：`checkpoints/best/`（backbone/modality_heads/output_adapters/token_encoder .pt + meta.json）+ `manifest_scalers.npz` + `manifest_training_summary.json` |
 | `temporal_full/eval/`、`random/eval/` | per-run 评估 json（`<run>.json`）；temporal 另有 3 个聚合文件（5%/1%）|
 | 各目录 `dataset_split*.csv|json` | slice/shot 级数据划分清单（合作者用）|
@@ -82,6 +84,19 @@ bs=64，wd=0，lr=1e-4（全部），patience=10；seeds 54/55/56（random A 1% 
 > std 均为总体标准差（ddof=0），与 eval json 一致。
 
 ⚠️ 论文 LaTeX/§52.1 中 temporal 1% 行 std（±0.04/±0.17）为样本 std（ddof=1），其余档为总体 std——跨源引用需换算。
+
+
+**Shape-OOD**（主指标 = Test-OOD-only；增益 = `(A−C)/A`，逐 seed 配对；详见 `shape_ood/README.md`）
+
+| 档 | A scratch | C ft | 配对 nRMSE 增益 |
+|---|---|---|---|
+| 1% | 5.383 ± 0.019 | 2.285 ± 0.202 | **+57.6%** |
+| 5% | 2.447 ± 0.126 | 1.706 ± 0.142 | **+30.0%** |
+| 25% | 2.071 ± 0.094 | 1.721 ± 0.107 | **+16.7%** |
+| 50% | 2.033 ± 0.098 | 1.674 ± 0.206 | **+17.3%** |
+| 100% | 2.007 ± 0.079 | 1.858 ± 0.273 | **+7.7%** |
+
+> Shape-OOD is a frozen diverted geometry benchmark (`delta_asym < -0.214`); historical 5/25/50/100% fractions are not strictly nested, and NEW 1% is an explicitly separate low-data ablation. Do not compare its result as a nested-fraction causal ablation.
 
 ## 6. 复现评估（任选归档内 run）
 

@@ -1,0 +1,50 @@
+{
+  "best_epoch": 32,
+  "best_val_nmse": 0.043793872826629214,
+  "experiment": "shape-ood",
+  "fraction_percent": 100,
+  "fraction_provenance": "historical_authoritative",
+  "geometry_test_all": {
+    "axis_r_error_m": 0.023904917874861535,
+    "axis_z_error_m": 0.031892731563990175,
+    "delta_asym_abs_error": 0.23120101227373563,
+    "delta_l_abs_error": 0.04365995821224578,
+    "delta_u_abs_error": 0.2544908561980022,
+    "lcfs_hausdorff_distance_m": 0.10849231588277301,
+    "lcfs_mean_boundary_distance_m": 0.03082781561746387,
+    "lcfs_success_count": 20758,
+    "lcfs_success_rate": 0.9998554982900631,
+    "n_samples": 20761
+  },
+  "geometry_test_ood_only": {
+    "axis_r_error_m": 0.02503813982850231,
+    "axis_z_error_m": 0.033326319111999576,
+    "delta_asym_abs_error": 0.2343459877346588,
+    "delta_l_abs_error": 0.04319731478566399,
+    "delta_u_abs_error": 0.25842558977760793,
+    "lcfs_hausdorff_distance_m": 0.10854676968395144,
+    "lcfs_mean_boundary_distance_m": 0.031299167825073575,
+    "lcfs_success_count": 19006,
+    "lcfs_success_rate": 0.9998421800199905,
+    "n_samples": 19009
+  },
+  "method": "synthetic_pretrain_real_finetune",
+  "method_code": "C",
+  "seed": "s54",
+  "source_result_filename": "C_100pct_s54.json",
+  "source_result_sha256": "92029f9f1bc2fdaf15b4b5271e551abfff1d485c9125a2ad38a2d4777fbbf8e3",
+  "source_run_directory": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_AC_historical_fractions_100epoch_3seed_20260901",
+  "stopped_epoch": 42,
+  "test_all": {
+    "nrmse_per_sample_percent": 1.9511609687684741,
+    "raw_mae": 0.0032585554048757326,
+    "raw_rmse": 0.004627726917819846,
+    "rmae": 0.014751193759660233
+  },
+  "test_ood_only": {
+    "nrmse_per_sample_percent": 1.994720585426607,
+    "raw_mae": 0.003351671962154555,
+    "raw_rmse": 0.004716080081731002,
+    "rmae": 0.015108807684592036
+  }
+}

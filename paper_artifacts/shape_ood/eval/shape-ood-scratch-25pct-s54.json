@@ -1,0 +1,50 @@
+{
+  "best_epoch": 236,
+  "best_val_nmse": 0.046779897063970566,
+  "experiment": "shape-ood",
+  "fraction_percent": 25,
+  "fraction_provenance": "historical_authoritative",
+  "geometry_test_all": {
+    "axis_r_error_m": 0.035439044362024975,
+    "axis_z_error_m": 0.039635614854775784,
+    "delta_asym_abs_error": 0.17292302753945332,
+    "delta_l_abs_error": 0.0607507028895227,
+    "delta_u_abs_error": 0.2131696083648157,
+    "lcfs_hausdorff_distance_m": 0.12465911392908266,
+    "lcfs_mean_boundary_distance_m": 0.0360423291744428,
+    "lcfs_success_count": 20761,
+    "lcfs_success_rate": 1.0,
+    "n_samples": 20761
+  },
+  "geometry_test_ood_only": {
+    "axis_r_error_m": 0.03683991793361043,
+    "axis_z_error_m": 0.041667762638750064,
+    "delta_asym_abs_error": 0.17365249886966574,
+    "delta_l_abs_error": 0.06070370044900854,
+    "delta_u_abs_error": 0.2149670476813514,
+    "lcfs_hausdorff_distance_m": 0.12590290280270805,
+    "lcfs_mean_boundary_distance_m": 0.03689932274895006,
+    "lcfs_success_count": 19009,
+    "lcfs_success_rate": 1.0,
+    "n_samples": 19009
+  },
+  "method": "scratch",
+  "method_code": "A",
+  "seed": "s54",
+  "source_result_filename": "A_25pct_s54.json",
+  "source_result_sha256": "f794dacca401f7a58dbad05cbf15923073a7a7f5a07ecd55cfa7538150da33e7",
+  "source_run_directory": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_A_historical_25_50_100_300epoch_convergence_3seed_20260902",
+  "stopped_epoch": 266,
+  "test_all": {
+    "nrmse_per_sample_percent": 2.0490209747545665,
+    "raw_mae": 0.003253890138072652,
+    "raw_rmse": 0.004794030196571269,
+    "rmae": 0.014845632952073294
+  },
+  "test_ood_only": {
+    "nrmse_per_sample_percent": 2.101083170651928,
+    "raw_mae": 0.003346032979427064,
+    "raw_rmse": 0.004890823645050669,
+    "rmae": 0.015207017302461542
+  }
+}

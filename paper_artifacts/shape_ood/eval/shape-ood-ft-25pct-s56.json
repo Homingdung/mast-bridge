@@ -1,0 +1,50 @@
+{
+  "best_epoch": 6,
+  "best_val_nmse": 0.04847188486407201,
+  "experiment": "shape-ood",
+  "fraction_percent": 25,
+  "fraction_provenance": "historical_authoritative",
+  "geometry_test_all": {
+    "axis_r_error_m": 0.02809980251432977,
+    "axis_z_error_m": 0.01934215596551226,
+    "delta_asym_abs_error": 0.2459128754735132,
+    "delta_l_abs_error": 0.0501315219592963,
+    "delta_u_abs_error": 0.2737214143086899,
+    "lcfs_hausdorff_distance_m": 0.10277308799202094,
+    "lcfs_mean_boundary_distance_m": 0.02754967101800225,
+    "lcfs_success_count": 20761,
+    "lcfs_success_rate": 1.0,
+    "n_samples": 20761
+  },
+  "geometry_test_ood_only": {
+    "axis_r_error_m": 0.02951075806197067,
+    "axis_z_error_m": 0.019921484559945288,
+    "delta_asym_abs_error": 0.2507803245738805,
+    "delta_l_abs_error": 0.04931333749411856,
+    "delta_u_abs_error": 0.278837741559266,
+    "lcfs_hausdorff_distance_m": 0.1023112543697593,
+    "lcfs_mean_boundary_distance_m": 0.02776011799085705,
+    "lcfs_success_count": 19009,
+    "lcfs_success_rate": 1.0,
+    "n_samples": 19009
+  },
+  "method": "synthetic_pretrain_real_finetune",
+  "method_code": "C",
+  "seed": "s56",
+  "source_result_filename": "C_25pct_s56.json",
+  "source_result_sha256": "eb092c548ad4b413386b351b9e058b4daf3c858d76f8d23e70bc1ab0b96d0358",
+  "source_run_directory": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_AC_historical_fractions_100epoch_3seed_20260901",
+  "stopped_epoch": 16,
+  "test_all": {
+    "nrmse_per_sample_percent": 1.7693266626332946,
+    "raw_mae": 0.0028259596822986744,
+    "raw_rmse": 0.004130234807175492,
+    "rmae": 0.012989279304506244
+  },
+  "test_ood_only": {
+    "nrmse_per_sample_percent": 1.7824696190810327,
+    "raw_mae": 0.00285869147413396,
+    "raw_rmse": 0.004156917679326733,
+    "rmae": 0.013084995269720585
+  }
+}

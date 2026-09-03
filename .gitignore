@@ -54,3 +54,6 @@ data/
 artifacts/
 logs/
 paper_artifacts/**/plot/out/
+
+# Shape-OOD formal 69D input schema
+!configs/diagnostic_features/mast_level2_common_69.json

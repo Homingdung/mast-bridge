@@ -1,0 +1,114 @@
+{
+  "counts": {
+    "synthetic_C_pretrain_slices": 175717,
+    "test_all_slices": 20761,
+    "test_ood_only_slices": 19009,
+    "test_shots": 775,
+    "train_shots": 5743,
+    "train_slices": 176319,
+    "val_shots": 170,
+    "val_slices": 2835
+  },
+  "format_version": "shape_ood_archive_v1",
+  "fraction_membership_summary": {
+    "1": {
+      "membership_label": "1",
+      "n_shots": 57,
+      "n_slices": 1575
+    },
+    "100": {
+      "membership_label": "100",
+      "n_shots": 5743,
+      "n_slices": 176319
+    },
+    "25": {
+      "membership_label": "25",
+      "n_shots": 1436,
+      "n_slices": 44019
+    },
+    "5": {
+      "membership_label": "5",
+      "n_shots": 287,
+      "n_slices": 8952
+    },
+    "50": {
+      "membership_label": "50",
+      "n_shots": 2872,
+      "n_slices": 88044
+    }
+  },
+  "historical_real_fraction_provenance": {
+    "100": {
+      "n_shots": 5743,
+      "n_slices": 176319,
+      "source_manifest": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/subset_run_real_100pct.jsonl",
+      "source_manifest_sha256": "d4a9bd6e3b4e5737ab12208ab9abcd0b35bfaed238930b361bcf88cb6c0ef6c3"
+    },
+    "25": {
+      "n_shots": 1436,
+      "n_slices": 44019,
+      "source_manifest": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/subset_run_real_25pct.jsonl",
+      "source_manifest_sha256": "1252a9af91254846d975c789f63f0c9e87a0271509bfa52ade6425fff5c8e034"
+    },
+    "5": {
+      "n_shots": 287,
+      "n_slices": 8952,
+      "source_manifest": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/subset_run_real_5pct.jsonl",
+      "source_manifest_sha256": "9d8b06f4d101c94008af4844e28abc83ce3584d554ce7165daf5c71aeeede108"
+    },
+    "50": {
+      "n_shots": 2872,
+      "n_slices": 88044,
+      "source_manifest": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/subset_run_real_50pct.jsonl",
+      "source_manifest_sha256": "69867cebab3e738ecaed2992db2c8d64f879d83138f989497cddf424645046a6"
+    }
+  },
+  "input_schema": "configs/diagnostic_features/mast_level2_common_69.json",
+  "integrity": {
+    "one_percent_membership_archived": true,
+    "one_percent_membership_matches_authoritative_manifest": true,
+    "real_sample_overlap": 0,
+    "synthetic_exact_train_parent_matching": true,
+    "synthetic_non_exact_train_key_count": 0,
+    "synthetic_val_test_parent_leakage": 0,
+    "test_ood_strict_subset_of_test": true,
+    "test_ood_subset_of_test": true,
+    "train_val_test_shot_overlap": 0
+  },
+  "new_low_data_fraction_provenance": {
+    "1": {
+      "membership_archived_in_dataset_split": true,
+      "membership_label": "1",
+      "n_shots": 57,
+      "n_slices": 1575,
+      "source_manifest": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_NEW_1pct_AC_3seed_20260902/manifests/real_1pct_train_manifest.jsonl",
+      "source_manifest_sha256": "c24e1aeacf85f8c6536d2e21b81abb6941f4cec972b70999a2e4e7ca856f417c",
+      "tier_type": "new_low_data_ablation"
+    }
+  },
+  "notes": [
+    "Historical 5/25/50/100% fractions are authoritative independent sequential sampler draws and are not strictly nested.",
+    "NEW 1% is a fixed low-data ablation generated using recovered sampler logic; it is not a historical fraction and is not asserted to be a subset of historical 5%.",
+    "Shape descriptors are metadata/evaluation variables only; they are not appended to the 69D model input.",
+    "1% is a new low-data tier; its authoritative 57-shot/1,575-slice membership is fully archived in dataset_split.csv and dataset_split_shots.csv.",
+    "Historical 5/25/50/100% fractions use authoritative manifests and are non-strictly nested."
+  ],
+  "output": "raw psi on 65x65 grid",
+  "shape_ood_rule": {
+    "definition": "delta_u - delta_l",
+    "operator": "<",
+    "threshold": -0.214,
+    "variable": "delta_asym"
+  },
+  "shot_level_split": {
+    "test": "r_OOD > 0.50",
+    "train": "r_OOD <= 0.10",
+    "val": "0.10 < r_OOD <= 0.50 (frozen capped ranked selection)"
+  },
+  "source_manifests": {
+    "test": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/split_test_real.jsonl",
+    "train": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/split_train_real.jsonl",
+    "val": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/data/manifests/shape_ood/split_val_real.jsonl"
+  },
+  "topology": "diverted"
+}
