@@ -4,13 +4,12 @@ Real MAST data + FreeGSNKE synthetic equilibria (PCA ±0.1σ, EFIT-anchored filt
 train a TokaMind-style network mapping 69 magnetic-diagnostic channels → 65×65 flux map ψ.
 This repository holds the latest code together with per-run evaluation results and
 dataset-split metadata for the two main studies (random split and temporal split).
-Experiment logs and result tables: `progress2.md` (§58.3, §59) and
-`paper_artifacts/EXPERIMENTS.md`.
+Quick overview and result tables: `paper_artifacts/EXPERIMENTS.md`.
 
 ## Repository layout
 
 ```
-├── README.md / progress2.md / paper_artifacts/EXPERIMENTS.md / PLOT_STYLE.md
+├── README.md / paper_artifacts/EXPERIMENTS.md / PLOT_STYLE.md
 ├── configs/           # diagnostic feature schemas, noise profiles, machine geometry
 ├── scripts/           # data generation, filtering, caching, training & evaluation
 ├── src/               # mast_bridge python package (datasets, solver wrappers)
@@ -41,8 +40,9 @@ Experiment logs and result tables: `progress2.md` (§58.3, §59) and
   with `scripts/build_cache_batched.py` etc.; the `eval/*.json` here are sufficient to
   reproduce every number in the paper tables, and the checkpoints/test caches reproduce
   them by re-running `scripts/evaluate_tokamind_testset.py`.
-- Full authoritative experiment log: `progress2.md` (start §53 for status, §59 for paper
-  tables, §58.3 for generalization conclusions, §57 for the 1%-tier seed handling).
+- Full authoritative experiment log (kept in the original collab workspace, not in this
+  repository): `progress2.md` — §53 status, §59 paper tables, §58.3 generalization
+  conclusions, §57 1%-tier seed handling.
 
 ## External dependency: tokamind (MMT model zoo) — required for training/eval
 
@@ -84,6 +84,6 @@ cd external/tokamind && git checkout 0b67cf56cd945b883fd3b0c9050cdfc560f98533 &&
 Branch off `main` for new studies (e.g., Shape-OOD). Follow the naming/config conventions
 in `paper_artifacts/EXPERIMENTS.md` §2-3; keep per-run eval jsons in
 `paper_artifacts/<study>/eval/` and figure-regeneration scripts in `.../plot/`. Data/split
-conventions for Shape-OOD (LCFS canonicalization, δu/δl, OOD definition) are documented in
-`progress2.md` §20 and the workflow doc
+conventions for Shape-OOD (LCFS canonicalization, δu/δl, OOD definition) are documented
+in the original workspace's `progress2.md` §20 and the workflow doc
 `Plasma_Shape_OOD_Workflow_v2_Detailed_LCFS.md` (available in the original workspace).
