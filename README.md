@@ -58,6 +58,41 @@ Full 5-tier tables (random × clean/noisy0.5/noisy2, temporal A/C): `progress2.m
 - Full authoritative experiment log: `progress2.md` (start §53 for status, §59 for paper
   tables, §58.3 for generalization conclusions, §57 for the 1%-tier seed handling).
 
+## External dependency: tokamind (MMT model zoo) — required for training/eval
+
+The training and evaluation scripts (`scripts/train_tokamind_manifest.py`,
+`scripts/evaluate_tokamind_testset.py`) import the `mmt` package (MultiModal
+Transformer) from the sibling checkout **`external/tokamind`**:
+
+```python
+# both scripts resolve the workspace root as two levels above the script dir and,
+# if present, prepend it to sys.path (no pip install of mmt itself required):
+TOKAMIND_SRC = WORKSPACE_ROOT / "external" / "tokamind" / "src"
+```
+
+Setup:
+
+```bash
+# 1. from the repository root, clone tokamind as a sibling directory
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git external/tokamind
+
+# 2. (optional but recommended) pin the commit used for the paper results
+cd external/tokamind && git checkout 0b67cf56cd945b883fd3b0c9050cdfc560f98533 && cd ../..
+
+# 3. make sure mmt's runtime dependencies are installed in the training venv
+#    (torch, torchvision, einops, ... — see external/tokamind/pyproject.toml);
+#    `pip install -e external/tokamind` works as well and makes `import mmt`
+#    resolvable even outside the scripts' sys.path hook.
+```
+
+- The scripts still need the MAST workspace layout: they must be launched from a root
+  that has `external/tokamind/` next to `mast-bridge/` (or the equivalent
+  `scripts/`/`configs/` layout, as in this repo).
+- If `external/tokamind` is absent, both scripts **fail at import time** with
+  `ModuleNotFoundError: No module named 'mmt'` — this is expected; follow the steps
+  above. A copy of the pinned tokamind checkout is included in the original collab
+  workspace (`external/tokamind/`, commit `0b67cf56`) if you need the exact tree.
+
 ## For collaborators
 
 Branch off `main` for new studies (e.g., Shape-OOD). Follow the naming/config conventions
