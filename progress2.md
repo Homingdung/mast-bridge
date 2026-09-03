@@ -3608,3 +3608,67 @@ Markdown 对照：
 - **重训（非评估）复现**需要训练 manifest + cache（`data/manifests/`、`data/processed/`，大体积未归档，
   路径与重建方法见 §51/README）；raw zarr 需 FAIR-MAST 源
 - noisy 预训练 init（noisy05/noisy20 版 sec50）未归档（仅 clean）；ft 成品 ckpt 齐全 → 结果复现不受影响
+
+---
+
+## 60. GitHub 论文仓库备份记录（2026-09-03）
+
+> **给新对话的交接**：本工作区的**权威源** = `collab_package/`（本文档所在）。GitHub 仓库
+> `Homingdung/mast-bridge` 是**论文仓库**（代码 + 精简 paper_artifacts），非唯一备份。
+> 本节省略版记录备份过程、结构与操作方式，避免新会话重复摸索。
+
+### 60.1 仓库与分支状态（2026-09-03）
+
+| 项 | 值 |
+|---|---|
+| 远端 | `https://github.com/Homingdung/mast-bridge.git`（SSH: `git@github.com:Homingdung/mast-bridge.git`）|
+| 本机 clone（暂存，可删）| `/tmp/opencode/paper_repo` |
+| 权威代码源 | `/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/mast-bridge/`（含 venv，不入库）|
+| 权威日志 | `/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/progress2.md`（本文件）|
+
+分支（2026-09-03）：
+- **`main`** = `5233fcb`（表修正 Gain 统一 (A−C)/A；**不含** progress2.md）
+- **`fix-table`** = `7f879a2`（= main + progress2.md；**PR #1 → main 已开**，
+  https://github.com/Homingdung/mast-bridge/pull/1 ，合并/关闭状态待查）
+- **`dev-mingdong`** = 旧远端分支，未动
+
+### 60.2 main 提交史（2026-09-03）
+
+| commit | 内容 |
+|---|---|
+| `3ad77ce` | 论文仓库快照：最新 mast-bridge 代码 + 精简 paper_artifacts（eval/dataset_split/test manifest/图再生脚本/EXPERIMENTS+PLOT_STYLE）+ README 重写 |
+| `c2e9ba3` | README 补外部依赖 tokamind（MMT）安装说明（pin `0b67cf56`）|
+| `e32239c` | 删 generalization 图 + plot/out 生成图（留再生脚本）；README 去掉结果数字 |
+| `8540b17` | 移除 progress2.md（后用户改主意 → 见 fix-table）|
+| `5233fcb` | **Gain 统一 (A−C)/A**（random 表修正：+37.8→+27.5 等）+ EXPERIMENTS/random README 同步 |
+| `7f879a2`（fix-table 独有）| progress2.md 入仓库 + README 引用恢复 |
+
+### 60.3 仓库内容规则（重要，勿破坏）
+
+**包含**：`scripts/` `src/` `configs/` `pyproject.toml`（最新代码，不含 venv）、
+`paper_artifacts/{EXPERIMENTS.md,PLOT_STYLE.md,random,temporal_full}`（仅：各 README、`eval/*.json`
+82 个、`dataset_split*.csv|json`、`test/split_test_real.jsonl`、`plot/{README,scripts}`——**图与数据文件
+全部不提交**，`plot/out/` 已 gitignore）、根 README、`progress2.md`（仅 fix-table 分支）。
+
+**不包含**（.gitignore 或人工排除）：两个 venv（`.tokamind-train-env`/`.freegsnke-solve-env`）、
+`*.npz/*.pt/*.zarr`、`paper_artifacts/**/checkpoints/`、`plot/out/`（生成图）、test cache npz（>100MB
+GitHub 限制）、训练 cache、raw zarr。需要复现的路径说明都在仓库 README。
+
+### 60.4 坑（GitHub 操作）
+
+1. **本环境 SSH 不可用**（`git@github.com` publickey 被拒）→ 一律用 HTTPS + Personal Access Token：
+   `git push https://x-access-token:<TOKEN>@github.com/Homingdung/mast-bridge.git <branch>`
+2. **2026-09-03 曾暴露 2 个 token**（fine-grained `github_pat_11A...` 无写权限 + classic `ghp_zMHS8F...`
+   有 repo 权限）——**应已被撤销**；新会话若需推送，请用户重新生成 classic PAT（`repo` 权限）
+3. GitHub 单文件上限 100MB——任何 npz/大产物**严禁**尝试入库（会 403/超限报错）
+4. 更新流程：`git clone https://github.com/Homingdung/mast-bridge.git`（或复用 /tmp/opencode/paper_repo）
+   → `cp -r` 最新文件 → commit → push 到目标分支；main 与 fix-table 需分别 push
+5. 分支用途：论文正式版走 `main`；progress2.md 等内部日志走 `fix-table`（PR #1）；合作者
+   Shape-OOD 从 `main` 开新分支
+
+### 60.5 如需恢复/复现
+
+- 评估复现：仓库内 `eval/*.json` 已足够重现论文表数字；端到端重跑需 checkpoints + test cache
+  npz（在原工作区 `paper_artifacts/{random,temporal_full}/checkpoints|test/`，未入库，见 §59.5）
+- tokamind 外部依赖：README「External dependency」节（clone + pin `0b67cf56`）
+- 论文数字/口径最终状态：见 §52.2/§53.3/§57.4/§58.3/§59（Gain 统一 (A−C)/A，2026-09-03）
