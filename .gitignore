@@ -53,3 +53,4 @@ runs/
 data/
 artifacts/
 logs/
+paper_artifacts/**/plot/out/
