@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from .manifest import ManifestEntry
+from .synthetic_quality import rejection_reasons_v34
 
 STRICT_SOLVER_TOLERANCE = 1e-8
 
@@ -20,12 +21,42 @@ def _is_finite_equilibrium(path: Path) -> bool:
         return False
 
 
+def _shot_zarr_dir(metadata: dict[str, Any], data_dir: Path | None) -> Path | None:
+    """Resolve the shot zarr directory for topology checking (criterion 2)."""
+    parent_shot = str(metadata.get("parent_shot", ""))
+    if not parent_shot:
+        return None
+    for candidate in (
+        Path(str(data_dir)) / f"{parent_shot}.zarr" if data_dir else None,
+        Path(str(metadata.get("data_dir", ""))) / f"{parent_shot}.zarr",
+    ):
+        if candidate is not None and candidate.is_dir():
+            return candidate
+    return None
+
+
 def rejection_reason(
     metadata: dict[str, Any],
     equilibrium_path: Path,
     max_solver_tolerance: float = STRICT_SOLVER_TOLERANCE,
+    machine_dir: Path | None = None,
+    shot_zarr_dir: Path | None = None,
 ) -> str | None:
-    """Return None for accepted samples, otherwise a stable rejection reason."""
+    """Return None for accepted samples, otherwise a stable rejection reason.
+
+    Criteria 1-7 (§34.1) are evaluated in order:
+
+    1. solver convergence / tolerance (existing)
+    2. |∫Jφ - Ip|/Ip < 1e-6                (solver-side ip_integrated)
+    3. p(s) >= 0                            (analytic)
+    4. F²(s) > 0                            (analytic)
+    5. Jφ inside limiter mask               (solver-side jtor_outside_limiter_fraction)
+    6. ψ_norm ∈ [0,1] inside mask           (analytic)
+    7. topology matches EFIT at target_time  (analytic; needs shot_zarr_dir)
+
+    Topology is anchored to the EFIT topology at the sample's own target_time:
+    the solve must match it; no manual topology filtering is applied.
+    """
     if metadata.get("solver_converged") is not True:
         return "solver_not_converged"
     try:
@@ -38,6 +69,23 @@ def rejection_reason(
         return "solver_tolerance_above_threshold"
     if not _is_finite_equilibrium(equilibrium_path):
         return "invalid_equilibrium"
+    if machine_dir is None:
+        machine_dir = Path(str(metadata.get("machine_geometry_source", ""))) or None
+        if machine_dir is not None and not machine_dir.is_dir():
+            machine_dir = None
+    if shot_zarr_dir is None:
+        parent_shot = str(metadata.get("parent_shot", ""))
+        if parent_shot:
+            candidate = Path(str(metadata.get("data_dir", ""))) / f"{parent_shot}.zarr"
+            shot_zarr_dir = candidate if candidate.is_dir() else None
+    reasons = rejection_reasons_v34(
+        metadata,
+        equilibrium_path=equilibrium_path,
+        machine_dir=machine_dir,
+        shot_zarr_dir=shot_zarr_dir,
+    )
+    if reasons:
+        return reasons[0][0]
     return None
 
 
@@ -60,6 +108,7 @@ def synthetic_entries(
     task: str | None = None,
     max_solver_tolerance: float = STRICT_SOLVER_TOLERANCE,
     sample_ids: set[str] | None = None,
+    data_dir: Path | None = None,
 ) -> list[ManifestEntry]:
     """Scan converged synthetic samples into manifest entries."""
     synthetic_root = Path(root).expanduser().resolve()
@@ -78,7 +127,11 @@ def synthetic_entries(
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
-        if rejection_reason(metadata, equilibrium_path, max_solver_tolerance) is not None:
+        shot_zarr_dir = _shot_zarr_dir(metadata, data_dir)
+        if rejection_reason(
+            metadata, equilibrium_path, max_solver_tolerance,
+            shot_zarr_dir=shot_zarr_dir,
+        ) is not None:
             continue
 
         parent_shot = str(metadata.get("parent_shot", ""))
@@ -107,6 +160,7 @@ def rejected_samples(
     root: str | Path,
     max_solver_tolerance: float = STRICT_SOLVER_TOLERANCE,
     sample_ids: set[str] | None = None,
+    data_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Scan synthetic samples that are excluded from the strict manifest."""
     synthetic_root = Path(root).expanduser().resolve()
@@ -127,7 +181,11 @@ def rejected_samples(
         except json.JSONDecodeError:
             rows.append({"sample_id": sample_dir.name, "reason": "metadata_invalid_json"})
             continue
-        reason = rejection_reason(metadata, equilibrium_path, max_solver_tolerance)
+        shot_zarr_dir = _shot_zarr_dir(metadata, data_dir)
+        reason = rejection_reason(
+            metadata, equilibrium_path, max_solver_tolerance,
+            shot_zarr_dir=shot_zarr_dir,
+        )
         if reason is None:
             continue
         rows.append(

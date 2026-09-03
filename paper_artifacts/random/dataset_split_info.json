@@ -1,0 +1,32 @@
+{
+  "experiment": "random",
+  "generated": "2026-09-02",
+  "split_rule": "逐炮随机划分（同一炮池）：train 5828 炮全 slice，val 728 炮/21147 slice，test 730 炮/21350 slice（train/val/test 无交集）。档位=按 train 炮数比例抽样且嵌套（1⊂5⊂10⊂25⊂50⊂100）；实验 = §49.13（e500）/ §50（ft150, w150）/ §52.2。",
+  "phase_composition": {
+    "train": "分档位炮子集（含 val 无训练样本外的全部 slice）",
+    "val": "全量",
+    "test": "全量"
+  },
+  "fractions_nested": [
+    "1%",
+    "5%",
+    "10%",
+    "25%",
+    "50%",
+    "100%"
+  ],
+  "rows": {
+    "csv_total": 213924
+  },
+  "train_slice_count_per_fraction": {
+    "100": 171427,
+    "50": 87822,
+    "25": 43711,
+    "10": 17799,
+    "5": 9070,
+    "1": 1924
+  },
+  "val_rows": 21147,
+  "test_rows": 21350,
+  "notes": "训练时 run manifest 用 subset_run_real_{f}pct（含全量 val 行，run 窗用）；模型训练切片集 = train 行"
+}

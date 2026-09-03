@@ -38,3 +38,18 @@ configs/time_grids/*
 !configs/reproduction/
 configs/reproduction/*
 !configs/reproduction/mast_small_13.env
+
+# python venvs (training/solver)
+.tokamind-train-env/
+.freegsnke-solve-env/
+
+# big binaries never committed (see README)
+*.npz
+*.pt
+*.zarr
+paper_artifacts/**/checkpoints/
+paper_artifacts/**/test/*.npz
+runs/
+data/
+artifacts/
+logs/

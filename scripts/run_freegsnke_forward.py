@@ -104,6 +104,69 @@ def equilibrium_topology_diagnostics(eq: Any) -> dict[str, Any]:
     }
 
 
+def equilibrium_instrumentation(eq: Any, profiles: Any) -> dict[str, Any]:
+    """Solver-side quality instrumentation for the §34 7-criterion gate.
+
+    Computed after the solve, on the final converged equilibrium:
+
+    - ``ip_integrated``: ∫Jφ dA over the grid (A).  Criterion 2 compares it
+      with Ip: |∫Jφ - Ip| / Ip < 1e-6.
+    - ``jtor_outside_limiter_fraction``: fraction of |Jφ| residing outside the
+      limiter mask.  Criterion 5 requires this to be ~0.
+    - ``psi_norm_in_mask_min/max``: ψ_norm = (ψ - ψ_axis)/(ψ_bndry - ψ_axis)
+      restricted to the limiter-mask points.  Criterion 6 requires [0, 1].
+    """
+    import numpy as np
+
+    instrumented: dict[str, Any] = {}
+    dR = float(eq.R[1, 0] - eq.R[0, 0]) if eq.R.shape[0] > 1 else 0.0
+    dZ = float(eq.Z[0, 1] - eq.Z[0, 0]) if eq.Z.shape[1] > 1 else 0.0
+
+    jtor = getattr(profiles, "jtor", None)
+    if jtor is not None:
+        jtor = np.asarray(jtor, dtype=float)
+        if dR > 0.0 and dZ > 0.0:
+            instrumented["ip_integrated"] = float(np.sum(jtor) * dR * dZ)
+
+        inside = getattr(eq, "mask_inside_limiter", None)
+        if inside is not None:
+            inside = np.asarray(inside, dtype=float)
+            outside = inside < 0.5
+            total = float(np.sum(np.abs(jtor)))
+            if total > 0.0:
+                instrumented["jtor_outside_limiter_fraction"] = float(
+                    np.sum(np.abs(jtor) * outside) / total
+                )
+            else:
+                instrumented["jtor_outside_limiter_fraction"] = 0.0
+
+    psi = np.asarray(eq.psi(), dtype=float)
+    psi_axis = getattr(eq, "psi_axis", None)
+    psi_bndry = getattr(eq, "psi_bndry", None)
+    if (
+        psi_axis is not None
+        and psi_bndry is not None
+        and float(psi_bndry) != float(psi_axis)
+    ):
+        psi_norm = (psi - float(psi_axis)) / (float(psi_bndry) - float(psi_axis))
+        # Criterion 6 mask = plasma core (Jtor > 0 region).  The profile
+        # object carries the core mask used in the final Jtor evaluation;
+        # fall back to the limiter mask when unavailable.
+        core_mask = getattr(profiles, "limiter_core_mask", None)
+        if core_mask is None:
+            core_mask = getattr(profiles, "diverted_core_mask", None)
+        if core_mask is None:
+            core_mask = getattr(eq, "mask_inside_limiter", None)
+        if core_mask is not None:
+            core_mask = np.asarray(core_mask, dtype=float) >= 0.5
+            masked = psi_norm[core_mask]
+            if masked.size > 0 and np.isfinite(masked).all():
+                instrumented["psi_norm_in_mask_min"] = float(masked.min())
+                instrumented["psi_norm_in_mask_max"] = float(masked.max())
+
+    return instrumented
+
+
 def solve_with_diagnostics(
     solver: Any,
     eq: Any,
@@ -475,8 +538,13 @@ def _apply_currents(
     machine_dir: Path,
     target_time: float,
     current_scale: float = 1.0,
+    overrides: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, dict[str, float]]:
     import numpy as np
+
+    overrides = overrides or {}
+    active_override = overrides.get("active", {})
+    passive_override = overrides.get("passive", {})
 
     active_group = shot["pf_active"]
     active_channels = [str(value) for value in active_group["current_channel"][:]]
@@ -485,8 +553,9 @@ def _apply_currents(
         zip(
             active_channels,
             [
-                float(at_time(active_group["time"][:], row, target_time)) * float(current_scale)
-                for row in active_current
+                float(active_override.get(ch, at_time(active_group["time"][:], row, target_time)))
+                * float(current_scale)
+                for ch, row in zip(active_channels, active_current, strict=True)
             ],
         )
     )
@@ -509,6 +578,8 @@ def _apply_currents(
     passive_source_at_time = passive_source_currents_at_time(
         passive_group, target_time, current_scale=current_scale
     )
+    for channel, value in passive_override.items():
+        passive_source_at_time[channel] = float(value)
 
     passive_payload = pickle.load(machine.files["passive_coils"].open("rb"))
     passive_effective_at_time: dict[str, float] = {}
@@ -593,6 +664,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alpha-offset", type=float, default=0.0)
     parser.add_argument("--beta-offset", type=float, default=0.0)
     parser.add_argument("--coil-current-scale", type=float, default=1.0)
+    # --- v752 absolute-state injection (overrides fit/scale values) --------
+    parser.add_argument("--ip-abs", type=float, default=None, help="Absolute Ip [A]; overrides fit+scale.")
+    parser.add_argument("--fvac-abs", type=float, default=None, help="Absolute fvac [T]; overrides fit+scale.")
+    parser.add_argument(
+        "--alpha-abs",
+        type=str,
+        default=None,
+        help="Comma-separated absolute alpha (a0,a1,a2); overrides fit+scale.",
+    )
+    parser.add_argument(
+        "--beta-abs",
+        type=str,
+        default=None,
+        help="Comma-separated absolute beta (b0,b1,b2); overrides fit+scale.",
+    )
+    parser.add_argument(
+        "--coil-currents-json",
+        type=Path,
+        default=None,
+        help="JSON {active: {channel: A}, passive: {channel: A}} overriding zarr currents.",
+    )
+    parser.add_argument(
+        "--warm-start",
+        type=Path,
+        default=None,
+        help="equilibrium.npz from a previous continuation step; its psi becomes the initial plasma psi.",
+    )
     return parser
 
 
@@ -640,12 +738,16 @@ def main(argv: list[str] | None = None) -> int:
     atexit.register(cleanup_solve_machine)
     tokamak = build_machine(MachineGeometry.load(solve_machine_dir))
     shot = zarr.open_group(str(shot_path), mode="r")
+    coil_overrides = None
+    if args.coil_currents_json is not None:
+        coil_overrides = json.loads(args.coil_currents_json.read_text(encoding="utf-8"))
     currents = _apply_currents(
         tokamak,
         shot,
         solve_machine_dir,
         args.target_time,
         current_scale=args.coil_current_scale,
+        overrides=coil_overrides,
     )
 
     fit = np.load(fit_path)
@@ -655,6 +757,18 @@ def main(argv: list[str] | None = None) -> int:
     alpha = np.asarray(fit["freegsnke_alpha"][fit_index]).tolist()
     beta = np.asarray(fit["freegsnke_beta"][fit_index]).tolist()
     fitted_time = float(fit["time"][fit_index])
+    if args.ip_abs is not None:
+        Ip = float(args.ip_abs)
+    if args.fvac_abs is not None:
+        fvac = float(args.fvac_abs)
+    if args.alpha_abs is not None:
+        alpha = [float(v) for v in args.alpha_abs.split(",")]
+        if len(alpha) != 3:
+            raise ValueError(f"--alpha-abs must have 3 coefficients, got {len(alpha)}")
+    if args.beta_abs is not None:
+        beta = [float(v) for v in args.beta_abs.split(",")]
+        if len(beta) != 3:
+            raise ValueError(f"--beta-abs must have 3 coefficients, got {len(beta)}")
     lao85_parameters = apply_lao85_perturbation(
         Ip=Ip,
         fvac=fvac,
@@ -682,6 +796,19 @@ def main(argv: list[str] | None = None) -> int:
         nx=args.nx,
         ny=args.ny,
     )
+    if args.warm_start is not None:
+        # Continuation: seed the plasma flux with the previous step's solution.
+        warm_path = args.warm_start.expanduser().resolve()
+        if not warm_path.is_file():
+            raise FileNotFoundError(f"Warm-start equilibrium not found: {warm_path}")
+        with np.load(warm_path, allow_pickle=False) as warm:
+            warm_psi = np.asarray(warm["psi"], dtype=float)
+        if warm_psi.shape != eq.psi().shape:
+            raise ValueError(
+                f"Warm-start psi shape {warm_psi.shape} != solve grid {eq.psi().shape}"
+            )
+        eq.plasma_psi = warm_psi
+        print(f"warm_start: seeded plasma psi from {warm_path}", flush=True)
     profiles = Lao85(eq=eq, Ip=Ip, fvac=fvac, alpha=alpha, beta=beta)
     solver = GSstaticsolver.NKGSsolver(eq)
     solver_diagnostics = solve_with_diagnostics(
@@ -692,6 +819,7 @@ def main(argv: list[str] | None = None) -> int:
         max_iterations=args.max_iterations,
     )
     topology_diagnostics = equilibrium_topology_diagnostics(eq)
+    instrumentation = equilibrium_instrumentation(eq, profiles)
     geometry_policy = machine_geometry_policy(machine_dir)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -749,6 +877,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     metadata.update(solver_diagnostics)
     metadata.update(topology_diagnostics)
+    metadata.update(instrumentation)
     (output_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )

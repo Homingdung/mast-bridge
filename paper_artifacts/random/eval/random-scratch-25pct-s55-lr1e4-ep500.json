@@ -1,0 +1,19 @@
+[
+  {
+    "checkpoint_best_val": 0.014835406785192153,
+    "checkpoint_epoch": 105,
+    "nrmse_global": 0.0043000348537087915,
+    "nrmse_per_sample": 0.007561159986700746,
+    "nrmse_sigma_global": 0.0442488519030091,
+    "nrmse_sigma_per_sample": 0.038416955936042295,
+    "raw_mae": 0.0010900971578819683,
+    "raw_rmse": 0.0020380107726376863,
+    "rmae_global": 0.0023000152088276946,
+    "rmae_per_sample": 0.005553407290329949,
+    "run": "random-scratch-25pct-s55-lr1e4-ep500",
+    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/random/checkpoints/random-scratch-25pct-s55-lr1e4-ep500",
+    "samples": 21350,
+    "std_rmse_per_sample_mean": 0.07801966920582348,
+    "test_shots": 730
+  }
+]

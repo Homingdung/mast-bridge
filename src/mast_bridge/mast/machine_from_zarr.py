@@ -75,7 +75,7 @@ def _active_payload(root: Any) -> dict[str, dict[str, Any]]:
 
     for name, (channel, geometry) in ACTIVE_GROUPS.items():
         if channel not in by_channel:
-            raise ValueError(f"pf_active/current_channel does not contain {channel!r}")
+            continue
         r = _values(group, f"{geometry}_r")
         z = _values(group, f"{geometry}_z")
         widths = _values(group, f"{geometry}_width")

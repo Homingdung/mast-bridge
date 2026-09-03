@@ -1,0 +1,53 @@
+[
+  {
+    "checkpoint_best_val": 0.07376010979036081,
+    "checkpoint_epoch": 19,
+    "nrmse_global": 0.013342493434925192,
+    "nrmse_per_sample": 0.022803995316609624,
+    "nrmse_sigma_global": 0.11665691044164736,
+    "nrmse_sigma_per_sample": 0.1223190248558805,
+    "raw_mae": 0.0031483517522166013,
+    "raw_rmse": 0.004693423491321931,
+    "rmae_global": 0.008950153904171504,
+    "rmae_per_sample": 0.01627892362573357,
+    "run": "temporal-ft-5pct-s54-lr1e4-ep100",
+    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s54-lr1e4-ep100",
+    "samples": 17498,
+    "std_rmse_per_sample_mean": 0.22662350287066493,
+    "test_shots": 507
+  },
+  {
+    "checkpoint_best_val": 0.07313215630801068,
+    "checkpoint_epoch": 27,
+    "nrmse_global": 0.014502221747190265,
+    "nrmse_per_sample": 0.02488841185160052,
+    "nrmse_sigma_global": 0.1267967184558237,
+    "nrmse_sigma_per_sample": 0.1333116944974171,
+    "raw_mae": 0.0033826290755407163,
+    "raw_rmse": 0.005101375433054818,
+    "rmae_global": 0.00961615893316228,
+    "rmae_per_sample": 0.017507416507953486,
+    "run": "temporal-ft-5pct-s55-lr1e4-ep100",
+    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s55-lr1e4-ep100",
+    "samples": 17498,
+    "std_rmse_per_sample_mean": 0.24721715219903068,
+    "test_shots": 507
+  },
+  {
+    "checkpoint_best_val": 0.0720776901532387,
+    "checkpoint_epoch": 18,
+    "nrmse_global": 0.013174789311591755,
+    "nrmse_per_sample": 0.022322842937484023,
+    "nrmse_sigma_global": 0.11519062942065068,
+    "nrmse_sigma_per_sample": 0.11946381984763581,
+    "raw_mae": 0.003097003361940742,
+    "raw_rmse": 0.004634431034186117,
+    "rmae_global": 0.008804180381557064,
+    "rmae_per_sample": 0.016053820961633488,
+    "run": "temporal-ft-5pct-s56-lr1e4-ep100",
+    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s56-lr1e4-ep100",
+    "samples": 17498,
+    "std_rmse_per_sample_mean": 0.22058736755773348,
+    "test_shots": 507
+  }
+]

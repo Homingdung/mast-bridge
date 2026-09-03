@@ -18,6 +18,14 @@ def build_variant_rows(
     The rows encode perturbations applied later by ``run_freegsnke_forward.py``
     to each fitted Lao85 profile. To change sampling later, keep the public row
     fields stable so batch solve scripts continue to work.
+
+    Perturbation ranges (v2, 2026-08-11): multiplicative ranges match the
+    natural width of each parameter measured over the full 818,139-row fit
+    ensemble (cleaned), i.e. scale = U(1 - CV, 1 + CV) with CV = sigma/median,
+    truncated to the positive domain when CV >= 100%. fvac is a measured,
+    near-constant quantity that is not part of the input feature schema, so it
+    is left unperturbed (scale 1.0). Additive offsets are zeroed because a
+    single offset cannot fit the a0 (~1e3) and a1/a2 (~5e5) magnitude scales.
     """
     if variants_per_point < 0:
         raise ValueError("variants_per_point must be non-negative")
@@ -33,13 +41,13 @@ def build_variant_rows(
                         "target_time": float(target_time),
                         "variant_id": f"v{index:03d}",
                         "sampling_method": "uniform_random",
-                        "ip_scale": rng.uniform(0.95, 1.05),
-                        "fvac_scale": rng.uniform(0.99, 1.01),
-                        "alpha_scale": rng.uniform(0.98, 1.02),
-                        "beta_scale": rng.uniform(0.98, 1.02),
-                        "alpha_offset": rng.uniform(-0.01, 0.01),
-                        "beta_offset": rng.uniform(-0.01, 0.01),
-                        "coil_current_scale": rng.uniform(0.97, 1.03),
+                        "ip_scale": rng.uniform(0.6, 1.4),
+                        "fvac_scale": 1.0,
+                        "alpha_scale": rng.uniform(0.5, 1.5),
+                        "beta_scale": rng.uniform(0.5, 1.5),
+                        "alpha_offset": 0.0,
+                        "beta_offset": 0.0,
+                        "coil_current_scale": rng.uniform(0.8, 1.2),
                     }
                 )
     return rows

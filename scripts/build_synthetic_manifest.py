@@ -56,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=STRICT_SOLVER_TOLERANCE,
         help="Maximum accepted FreeGSNKE final tolerance.",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Raw shot zarr root (data/raw/mast). Enables topology criterion 2.",
+    )
     return parser
 
 
@@ -88,11 +94,13 @@ def main(argv: list[str] | None = None) -> int:
         task=args.task,
         max_solver_tolerance=args.max_solver_tolerance,
         sample_ids=sample_ids,
+        data_dir=args.data_dir,
     )
     rejected = rejected_samples(
         args.synthetic_root,
         max_solver_tolerance=args.max_solver_tolerance,
         sample_ids=sample_ids,
+        data_dir=args.data_dir,
     )
 
     write_manifest(accepted, args.output)

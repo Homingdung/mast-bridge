@@ -1,0 +1,32 @@
+{
+  "experiment": "temporal",
+  "generated": "2026-09-02 (归档更新 2026-09-03)",
+  "split_rule": "时间序划分：train=M5-M7（6046 炮全 slice），val=M8 全量（559 炮/6206 slice），test=M9 全量（507 炮/17498 slice）。档位=按 train 炮数比例抽样且嵌套（1⊂5⊂10⊂25⊂50⊂100，seed 20260825/20260827）；每个 train slice 标注其隶属档位。实验 = temporal 全 5 档 A/C 曲线 §54.6/§48.7-8/§55.7（旧归档 2026-09-02 仅 5%/1% = §48.7/48.8/§52.1）。",
+  "phase_composition": {
+    "train": "分档位炮子集（含 val 无训练样本外的全部 slice）",
+    "val": "全量",
+    "test": "全量"
+  },
+  "fractions_nested": [
+    "1%",
+    "5%",
+    "10%",
+    "25%",
+    "50%",
+    "100%"
+  ],
+  "rows": {
+    "csv_total": 210996
+  },
+  "train_slice_count_per_fraction": {
+    "100": 187292,
+    "50": 93722,
+    "25": 46840,
+    "10": 18615,
+    "5": 8683,
+    "1": 1917
+  },
+  "val_rows": 6206,
+  "test_rows": 17498,
+  "notes": "训练时 run manifest 用 subset_run_real_{f}pct（含全量 val 行，run 窗用）；模型训练切片集 = train 行"
+}

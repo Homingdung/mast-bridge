@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument(
+        "--dataset-cache",
+        type=Path,
+        default=None,
+        help="Optional npz cache of pre-extracted (features, psi) matrices for the manifest.",
+    )
+    parser.add_argument(
         "--feature-schema",
         type=Path,
         default=None,
@@ -63,9 +69,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit validation shot; repeat to force one common split across runs.",
     )
     parser.add_argument("--seed", type=int, default=54)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--lr-schedule",
+        choices=("cosine", "constant"),
+        default="cosine",
+        help="LR schedule: cosine (warmup+cosine decay to 0) or constant (fixed LR, no scheduler).",
+    )
+    parser.add_argument(
+        "--warmup-fraction",
+        type=float,
+        default=0.0,
+        help="Fraction of total steps used for linear LR warmup (cosine schedule); e.g. 0.1 = 10% warmup.",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="AdamW weight decay applied uniformly to all param groups (default 0 = legacy behavior).",
+    )
     parser.add_argument("--d-model", type=int, default=64)
     parser.add_argument("--n-layers", type=int, default=2)
     parser.add_argument("--n-heads", type=int, default=4)
@@ -87,7 +112,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lora-alpha", type=float, default=16.0)
     parser.add_argument("--input-mode", choices=sorted(INPUT_MODES), required=True)
     parser.add_argument("--target-mode", choices=sorted(TARGET_MODES), default=TARGET_RAW_PSI)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume an interrupted run from its latest checkpoint (model, optimizer, scheduler, scaler, epoch).",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate manifest loading without importing torch.")
+    parser.add_argument(
+        "--eval-every",
+        type=int,
+        default=1,
+        help="Validate + checkpoint every N epochs (default 1 = every epoch). Use >1 for tiny datasets.",
+    )
     return parser
 
 
@@ -373,6 +409,9 @@ def _train(
         args=args,
         train_dataset=train_dataset,
     )
+    if torch.cuda.is_available():
+        model = model.cuda()
+        print(f"cuda: model moved to {torch.cuda.get_device_name(0)}", flush=True)
 
     collate = MMTCollate(
         {
@@ -388,7 +427,8 @@ def _train(
         batch_size=int(args.batch_size),
         shuffle=True,
         drop_last=False,
-        num_workers=0,
+        num_workers=4,
+        persistent_workers=True,
         collate_fn=collate,
     )
     val_loader = DataLoader(
@@ -396,7 +436,8 @@ def _train(
         batch_size=int(args.batch_size),
         shuffle=False,
         drop_last=False,
-        num_workers=0,
+        num_workers=4,
+        persistent_workers=True,
         collate_fn=collate,
     )
 
@@ -408,8 +449,8 @@ def _train(
         "full": "manifest_full_finetune",
     }[fine_tune_method]
     train_cfg = {
-        "resume": False,
-        "early_stop": {"patience": max(2, int(args.epochs)), "delta": 0.0},
+        "resume": bool(args.resume),
+        "early_stop": {"patience": int(args.patience), "delta": 0.0},
         "amp": {"enable": torch.cuda.is_available()},
         "loss": {"terms": [{"type": "embed_mse", "weight": 1.0}], "output_weights": {}},
         "optimizer": {"use_adamw": True},
@@ -417,7 +458,12 @@ def _train(
             {
                 "name": stage_name,
                 "epochs": int(args.epochs),
-                "scheduler": {"grad_accum_steps": 1, "warmup_steps_fraction": 0.0},
+                "eval_every": max(1, int(args.eval_every)),
+                "scheduler": {
+                    "grad_accum_steps": 1,
+                    "warmup_steps_fraction": float(args.warmup_fraction),
+                    "type": args.lr_schedule,
+                },
                 "optimizer": {
                     "lr": {
                         "token_encoder": float(args.lr),
@@ -426,10 +472,10 @@ def _train(
                         "output_adapters": float(args.lr),
                     },
                     "wd": {
-                        "token_encoder": 0.0,
-                        "backbone": 0.0,
-                        "modality_heads": 0.0,
-                        "output_adapters": 0.0,
+                        "token_encoder": float(args.weight_decay),
+                        "backbone": float(args.weight_decay),
+                        "modality_heads": float(args.weight_decay),
+                        "output_adapters": float(args.weight_decay),
                     },
                 },
                 "freeze": {
@@ -491,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         input_mode=str(args.input_mode),
         target_mode=str(args.target_mode),
         feature_names=feature_names,
+        cache_path=args.dataset_cache,
     )
 
     print(_summary(rows, train_dataset, val_dataset, str(args.input_mode), str(args.target_mode)))
