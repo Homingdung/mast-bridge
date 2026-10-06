@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""PCA 0.1σ 全量求解分片 worker。
+"""Solve a row-range shard of the full PCA 0.1-sigma manifest.
 
-每个 shard 处理 manifest 的一行区间，按炮分组炮内时间序 warm start，
-逐片调用 run_freegsnke_forward.py（绝对参数注入）。断点续跑（已有
-metadata.json 的跳过）。进度写入 jsonl 日志。
-"""
+Group rows by shot and solve in time order with warm starts, passing explicit
+parameters to run_freegsnke_forward.py. Resume by skipping existing metadata.json
+outputs, and record progress in a JSONL log."""
 
 from __future__ import annotations
+
+import os
 
 import argparse
 import csv
@@ -17,7 +18,7 @@ import time
 from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 FW = SCRIPT_ROOT / "scripts" / "run_freegsnke_forward.py"
 FIT = WORKSPACE_ROOT / "data" / "processed" / "real" / "lao_parameter_ensemble" / "all_zarr_lao_parameter_fits.npz"
 
@@ -36,7 +37,7 @@ def main() -> int:
     rows = list(csv.DictReader(args.csv.open()))[args.start : args.end]
     print(f"[shard] rows {args.start}:{args.end} = {len(rows)}", flush=True)
 
-    # 按炮分组、炮内时间序
+    # Group by shot and sort each shot by target time.
     by_shot: dict[str, list[dict]] = {}
     for r in rows:
         by_shot.setdefault(r["shot"], []).append(r)

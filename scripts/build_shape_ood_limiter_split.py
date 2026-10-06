@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""limiter 版 Shape-OOD split：topology=limited，OOD = delta_asym > P90。
-输出 shape_ood_limiter/ 目录：split train/val/test/test_ood_only + subsets 100/50/25 + synth C。
-"""
+"""Build a limited-topology Shape-OOD split with delta_asym > P90 as OOD.
+
+Write Train/Validation/Test/OOD-only manifests, nested 100/50/25% subsets,
+and topology-aligned Synthetic pretraining manifests under shape_ood_limiter/."""
 from __future__ import annotations
+
+import os
 
 import json
 import random
@@ -12,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 sys.path.insert(0, str(SCRIPT_ROOT))
 from mast_bridge.training.tokamind_manifest import load_manifest_rows  # noqa: E402
 
@@ -70,7 +73,7 @@ def main() -> int:
     n_te = dump(test_shots, "split_test_real.jsonl")
     n_ood = dump(test_shots, "split_test_ood_only_real.jsonl", ood_only=True)
 
-    # subsets 100/50/25（嵌套按炮 + val）
+    # Nested 100/50/25% shot subsets, with Validation appended.
     val_rows = [json.loads(l) for l in (OUT / "split_val_real.jsonl").open()]
     train_rows = [json.loads(l) for l in (OUT / "split_train_real.jsonl").open()]
     by_shot = {}

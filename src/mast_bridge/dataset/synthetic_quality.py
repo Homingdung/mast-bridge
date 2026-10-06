@@ -364,9 +364,9 @@ def quality_rejection_reasons(
             reasons.append(("psi_norm_mask_out_of_range", float(max(abs(lo), abs(hi)))))
 
     # --- criterion 7: topology vs EFIT at target_time ---------------------
-    # 位形锚定 = EFIT 在 target_time 处的真实位形：solve 与之匹配即通过，
-    # 不匹配才拒（topology_mismatch）。不做任何人为位形筛选（例如不因
-    # EFIT/solve 为 limited 而直接拒绝）。
+    # Anchor topology to EFIT at target_time: accept matching solver topology,
+    # reject mismatches (topology_mismatch), and apply no extra topology filter.
+    # In particular, limited EFIT/solver topology is not rejected by itself.
     if shot_zarr_dir is not None:
         solve_topo = solve_topology(metadata)
         efit_topo = efit_topology_at_time(

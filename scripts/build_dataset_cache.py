@@ -11,6 +11,8 @@ Usage:
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
 import sys
@@ -31,10 +33,11 @@ from mast_bridge.training.tokamind_manifest import (  # noqa: E402
     TARGET_RAW_PSI,
     _feature_vector,
     _psi_for_row,
+    load_feature_schema,
+    load_manifest_rows,
 )
 
-WORKSPACE_ROOT = SCRIPT_ROOT.parents[1]
-SCALERS_PATH = WORKSPACE_ROOT / "runs" / "tokamind-large-real-scratch-100e" / "manifest_scalers.npz"
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parents[1])).expanduser().resolve()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=32)
+    parser.add_argument("--scalers", type=Path, default=None, help="Use feature order from an archived run's manifest_scalers.npz.")
+    parser.add_argument("--feature-schema", type=Path, default=SCRIPT_ROOT.parent / "configs/diagnostic_features/mast_level2_common_69.json", help="Feature schema used when --scalers is omitted.")
     parser.add_argument(
         "--diagnostics-name",
         type=str,
@@ -54,10 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    with np.load(SCALERS_PATH, allow_pickle=True) as data:
-        feature_names = [str(v) for v in data["feature_names"].tolist()]
+    if args.scalers is not None:
+        with np.load(args.scalers.expanduser().resolve(), allow_pickle=True) as data:
+            feature_names = [str(v) for v in data["feature_names"].tolist()]
+    else:
+        feature_names = load_feature_schema(args.feature_schema)
 
-    rows = [json.loads(line) for line in args.manifest.expanduser().resolve().open(encoding="utf-8") if line.strip()]
+    rows = load_manifest_rows(args.manifest)
     if args.diagnostics_name != "diagnostics.npz":
         for row in rows:
             row["diagnostics_path"] = str(
@@ -105,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(output, sample_ids=sample_ids, features=features, psi=psi)
+    np.savez_compressed(output, sample_ids=sample_ids, features=features, psi=psi, feature_names=np.asarray(feature_names, dtype=str))
     print(f"cache: {output} ({output.stat().st_size / 1e9:.2f} GB)", flush=True)
     return 0
 

@@ -24,6 +24,8 @@ Caches (data/processed/training_cache_v2_statwidth/):
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import csv
 import json
@@ -34,7 +36,7 @@ from pathlib import Path
 import numpy as np
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 
 
 def load_rows(path: Path) -> list[dict]:

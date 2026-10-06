@@ -11,7 +11,7 @@
     "rmae_global": 0.0022597333544868495,
     "rmae_per_sample": 0.0054388731425488975,
     "run": "random-scratch-25pct-s56-lr1e4-ep500",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/random/checkpoints/random-scratch-25pct-s56-lr1e4-ep500",
+    "run_dir": "paper_artifacts/random/checkpoints/random-scratch-25pct-s56-lr1e4-ep500",
     "samples": 21350,
     "std_rmse_per_sample_mean": 0.07583302149020288,
     "test_shots": 730

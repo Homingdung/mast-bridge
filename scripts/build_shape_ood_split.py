@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Shape-OOD 步骤 [4]+[5]：diverted-only shot-level split + Synthetic C 筛选。
+"""Build the frozen diverted-only, shot-level Shape-OOD split.
 
-OOD region（已冻结）: delta_asym < -0.214（Real diverted P10）
-Split: r_OOD(s)=N[OOD slices]/N(s)
-  test: r_OOD > 0.5（高浓度 unseen shape）
-  val : r_OOD in (0.1, 0.5]（transition，从高到低取 ~500 炮）
-  train: r_OOD <= 0.1（几乎不含 OOD 形状）
-输出: data/manifests/shape_ood/{split_train,split_val,split_test,split_test_ood_only}_real.jsonl
-     + data/manifests/shape_ood/split_synth_pretrain.jsonl（C 预训练，diverted 对齐 + exact parent）
-"""
+An OOD slice has delta_asym < -0.214 (Real diverted P10).
+For each shot, r_OOD is the fraction of OOD slices: Test > 0.5;
+Validation (0.1, 0.5], ranked from high to low for approximately 500 shots;
+Train <= 0.1. Write Real train/validation/test and OOD-only manifests.
+Synthetic pretraining uses topology-aligned, exact Train-parent matches only."""
 from __future__ import annotations
+
+import os
 
 import json
 import sys
@@ -18,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
@@ -46,7 +45,7 @@ def main() -> int:
         d = json.loads(l)
         synth_shape[d["sample_id"]] = d
 
-    # --- 每炮 r_OOD（diverted real，仅 lcfs_valid）---
+    # --- Per-shot OOD occupancy: diverted Real slices with valid LCFS only ---
     occ = {}
     for r in real_rows:
         sid = r["sample_id"]
@@ -67,7 +66,7 @@ def main() -> int:
     train_shots = {s for s in shots_all if s not in test_shots and s not in val_shots}
     assert not (train_shots & val_shots) and not (train_shots & test_shots) and not (val_shots & test_shots)
 
-    # --- 输出 real split manifests（diverted-only + lcfs_valid）---
+    # --- Write Real split manifests: diverted topology and valid LCFS only ---
     def dump(shots, path, ood_only=False):
         kept = 0
         with (OUT / path).open("w", encoding="utf-8") as f:
@@ -87,7 +86,7 @@ def main() -> int:
     n_te = dump(test_shots, "split_test_real.jsonl")
     n_ood = dump(test_shots, "split_test_ood_only_real.jsonl", ood_only=True)
 
-    # --- Synthetic C：parent_shot in train + diverted 对齐（exact parent key）---
+    # --- Synthetic C: diverted topology and exact Train-parent matching ---
     train_keys = set()
     for r in real_rows:
         s = r["shot_id"]

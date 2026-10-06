@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import csv
 import json
@@ -14,7 +16,7 @@ from typing import Callable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = REPO_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", REPO_ROOT.parent)).expanduser().resolve()
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))

@@ -33,7 +33,7 @@
   "seed": "s56",
   "source_result_filename": "C_100pct_s56.json",
   "source_result_sha256": "d2c0e358199d2dd622ed0bc66282050f2e4e52dc33781d182e0f0c50b61e6327",
-  "source_run_directory": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_AC_historical_fractions_100epoch_3seed_20260901",
+  "source_run_directory": "runs/shape_ood_AC_historical_fractions_100epoch_3seed_20260901",
   "stopped_epoch": 21,
   "test_all": {
     "nrmse_per_sample_percent": 1.9953544745717304,

@@ -11,7 +11,7 @@
     "rmae_global": 0.008950153904171504,
     "rmae_per_sample": 0.01627892362573357,
     "run": "temporal-ft-5pct-s54-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s54-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s54-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.22662350287066493,
     "test_shots": 507
@@ -28,7 +28,7 @@
     "rmae_global": 0.00961615893316228,
     "rmae_per_sample": 0.017507416507953486,
     "run": "temporal-ft-5pct-s55-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s55-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s55-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.24721715219903068,
     "test_shots": 507
@@ -45,7 +45,7 @@
     "rmae_global": 0.008804180381557064,
     "rmae_per_sample": 0.016053820961633488,
     "run": "temporal-ft-5pct-s56-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s56-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s56-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.22058736755773348,
     "test_shots": 507

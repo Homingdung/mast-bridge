@@ -20,13 +20,15 @@ Outputs (data/manifests/training_pca_01sigma/):
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
 import random
 from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 DEFAULT_OUT = WORKSPACE_ROOT / "data" / "manifests" / "training_pca_01sigma"
 
 

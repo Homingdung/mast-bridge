@@ -13,6 +13,14 @@ dist/
 # Local machine/workspace state
 configs/paths.local.yaml
 
+# Private experiment log; keep only in the local workspace
+/progress2.md
+
+# Local paper notes consolidated into progress2.md
+/paper_artifacts/EXPERIMENTS.md
+/paper_artifacts/PLOT_STYLE.md
+**/[Rr][Ee][Aa][Dd][Mm][Ee]*
+
 # Large local data and outputs
 data/
 /runs/
@@ -43,7 +51,7 @@ configs/reproduction/*
 .tokamind-train-env/
 .freegsnke-solve-env/
 
-# big binaries never committed (see README)
+# Local binary outputs (already tracked archive files are unaffected)
 *.npz
 *.pt
 *.zarr

@@ -16,14 +16,14 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = REPO_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", REPO_ROOT.parent)).expanduser().resolve()
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import compare_freegsnke_magnetic_diagnostics as comparison  # noqa: E402
+from mast_bridge.mast.machine_config import correct_magnetic_probes_in_machine_dir  # noqa: E402
 import run_freegsnke_forward as forward  # noqa: E402
 
 from mast_bridge.simulation.synthetic_diagnostics import (  # noqa: E402
@@ -428,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
             temporary_machine_dir = forward._copy_machine_with_positive_widths(
                 raw_machine_dir
             )
-            comparison.correct_magnetic_probes_in_machine_dir(
+            correct_magnetic_probes_in_machine_dir(
                 temporary_machine_dir, shot_group["magnetics"]
             )
             machine = MachineGeometry.load(temporary_machine_dir)

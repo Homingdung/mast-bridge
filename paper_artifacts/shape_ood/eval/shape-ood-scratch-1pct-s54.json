@@ -33,7 +33,7 @@
   "seed": "s54",
   "source_result_filename": "A_1pct_s54.json",
   "source_result_sha256": "82196e1d2cbf958a21e9af1f69d536eb4a237dfee777eb71dc2938aefcdefa16",
-  "source_run_directory": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_NEW_1pct_AC_3seed_20260902",
+  "source_run_directory": "runs/shape_ood_NEW_1pct_AC_3seed_20260902",
   "stopped_epoch": 159,
   "test_all": {
     "nrmse_per_sample_percent": 5.334805902289918,

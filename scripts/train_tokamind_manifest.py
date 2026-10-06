@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import hashlib
 import json
@@ -14,7 +16,7 @@ import numpy as np
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 TOKAMIND_SRC = WORKSPACE_ROOT / "external" / "tokamind" / "src"
 if TOKAMIND_SRC.is_dir() and str(TOKAMIND_SRC) not in sys.path:
     sys.path.insert(0, str(TOKAMIND_SRC))
@@ -83,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--warmup-fraction",
         type=float,
         default=0.0,
-        help="Fraction of total steps used for linear LR warmup (cosine schedule); e.g. 0.1 = 10% warmup.",
+        help="Fraction of total steps used for linear LR warmup (cosine schedule); e.g. 0.1 = 10%% warmup.",
     )
     parser.add_argument(
         "--weight-decay",

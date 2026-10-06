@@ -1,14 +1,11 @@
-"""计算 j_tor–Ip 散点所需的 (Ip_meas, Ip_pred) 数组（每 test slice 一点）。
+"""Compute measured/predicted plasma-current pairs for each Test slice.
 
-依赖全量 shot zarr（j_phi/ip/equilibrium 帧），仅 workspace 可跑；产物 npz 归档后，
-画图只需 plot_jtor_ip_combined.py（无 zarr 依赖）。
-方法：Δ*ψ = d²ψ/dR² − (1/R)dψ/dR + d²ψ/dZ²（2 阶中心差分，内部 63×63）；
-     J_φ = −Δ*ψ/(μ₀R)；Ip_pred = Σ_mask J_φ dR dZ；mask = EFIT j_φ 帧内 > 帧max×1e-3；
-参考 Ip = 罗氏线圈 magnetics/ip 在 target_time 插值。
-run 名 = 归档统一新名（旧名对照 = ../EXPERIMENTS.md 附录 A）。
-用法: python compute_jtor_pairs.py [--zarr-root <fusion-workspace/data/raw/mast>]
-输出: data/jtor_ip_pairs.npz（keys = run 新名 → {'meas_ma':..., 'pred_ma':...}）
-"""
+Use raw shot Zarr (equilibrium/j_phi, equilibrium/time, magnetics/ip and time)
+and archived-run predictions. Compute Delta*psi with second-order differences
+on the inner 63x63 grid, J_phi = -Delta*psi/(mu_0 R), and integrate over the
+EFIT j_phi > frame maximum * 1e-3 mask. Interpolate the Rogowski-coil current
+at target_time. plot_jtor_ip_combined.py can then plot the saved pairs without Zarr.
+Values are stored in amperes and converted to MA by the plotting script."""
 import argparse
 import json
 from functools import lru_cache
@@ -16,6 +13,10 @@ from pathlib import Path
 
 import numpy as np
 import zarr
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from plot_paths import add_plot_paths
 
 BASE = Path(__file__).resolve().parents[1]          # <archive>/random/plot
 PREDS_DIR = BASE / "data" / "preds"
@@ -42,10 +43,14 @@ def lapstar(psi):
 
 
 def main():
+    global PREDS_DIR, OUT, MANIFEST
     ap = argparse.ArgumentParser()
-    ap.add_argument("--zarr-root", required=True,
-                    help="含 <shot>.zarr 与 equilibrium/j_phi 的全量数据目录")
+    add_plot_paths(ap, __file__, zarr=True, pairs=True)
     args = ap.parse_args()
+    PREDS_DIR = args.preds_dir.expanduser().resolve()
+    MANIFEST = args.manifest.expanduser().resolve()
+    OUT = args.pairs.expanduser().resolve()
+    OUT.parent.mkdir(parents=True, exist_ok=True)
     ZARR = Path(args.zarr_root)
 
     @lru_cache(maxsize=64)

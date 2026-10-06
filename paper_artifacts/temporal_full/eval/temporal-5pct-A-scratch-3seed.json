@@ -11,7 +11,7 @@
     "rmae_global": 0.015581227118963238,
     "rmae_per_sample": 0.02828273555373832,
     "run": "temporal-scratch-5pct-s54-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-5pct-s54-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-5pct-s54-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.372432045691411,
     "test_shots": 507
@@ -28,7 +28,7 @@
     "rmae_global": 0.016882970001424986,
     "rmae_per_sample": 0.030447046928085857,
     "run": "temporal-scratch-5pct-s55-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-5pct-s55-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-5pct-s55-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.39696167774631824,
     "test_shots": 507
@@ -45,7 +45,7 @@
     "rmae_global": 0.015771794627127682,
     "rmae_per_sample": 0.0286109658663224,
     "run": "temporal-scratch-5pct-s56-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-5pct-s56-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-5pct-s56-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.3694610109591161,
     "test_shots": 507

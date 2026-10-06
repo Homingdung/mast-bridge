@@ -1,7 +1,7 @@
 {
-  "manifest": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/data/manifests/training_pca_01sigma/subset_run_real_50pct.jsonl",
+  "manifest": "data/manifests/training_pca_01sigma/subset_run_real_50pct.jsonl",
   "feature_reference_manifest": null,
-  "feature_schema": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/mast-bridge/configs/diagnostic_features/mast_level2_common_69.json",
+  "feature_schema": "mast-bridge/configs/diagnostic_features/mast_level2_common_69.json",
   "rows": 108969,
   "train_windows": 87822,
   "val_windows": 21147,

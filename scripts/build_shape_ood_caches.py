@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Shape-OOD 步骤 [6] 准备：嵌套子集 manifest + cache 切片 + 合成预训练 cache。
+"""Prepare newly generated Shape-OOD subset manifests and sliced caches.
 
-- subsets: 从 split_train_real.jsonl（diverted train 176,319 行）按炮分层嵌套抽 50/25/5%，
-  拼接 shape_ood val（2,835 行）→ subset_run_real_{f}pct.jsonl（run 版，与 §19 模式一致）
-- caches: 从 real_full.npz 按 sample_id 切片 → subset_run_real_{f}pct.npz
-- synth C: split_synth_pretrain.jsonl → synth_ood_pretrain_clean.npz（从 synth_pretrain_clean.npz 切片）
-- test caches: split_test_real.jsonl → test_real.npz；split_test_ood_only_real.jsonl → test_ood_only_real.npz
-"""
+Sample nested 50/25/5% shot subsets from the 176,319-slice diverted Train pool,
+and append the 2,835-slice Validation pool to each run manifest.
+Slice real_full.npz by sample_id; extract the Synthetic pretraining cache from
+synth_pretrain_clean.npz, and create Test-all and Test-OOD-only caches.
+These new nested subsets do not replace the archived historical non-nested draws."""
 from __future__ import annotations
+
+import os
 
 import json
 import random
@@ -17,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 sys.path.insert(0, str(SCRIPT_ROOT))
 
 from scripts.slice_cache import main as slice_cache_main  # noqa: E402
@@ -60,7 +61,7 @@ def main() -> int:
         print(f"subset {frac}%: train_rows={len(sel)} + val={len(val_rows)} = {len(run_rows)}", flush=True)
         run_slice("real_full.npz", f"subset_run_real_{frac}pct.jsonl", f"subset_run_real_{frac}pct.npz")
 
-    # 合成预训练 cache
+    # Synthetic pretraining cache.
     run_slice("synth_pretrain_clean.npz", "split_synth_pretrain.jsonl", "synth_ood_pretrain_clean.npz")
     # test caches
     run_slice("real_full.npz", "split_test_real.jsonl", "test_real.npz")

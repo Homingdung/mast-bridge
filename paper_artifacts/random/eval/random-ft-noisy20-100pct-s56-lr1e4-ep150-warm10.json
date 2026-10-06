@@ -11,7 +11,7 @@
     "rmae_global": 0.0020023366470419968,
     "rmae_per_sample": 0.004865655523767415,
     "run": "random-ft-noisy20-100pct-s56-lr1e4-ep150-warm10",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/random/checkpoints/random-ft-noisy20-100pct-s56-lr1e4-ep150-warm10",
+    "run_dir": "paper_artifacts/random/checkpoints/random-ft-noisy20-100pct-s56-lr1e4-ep150-warm10",
     "samples": 21350,
     "std_rmse_per_sample_mean": 0.06698050774787176,
     "test_shots": 730

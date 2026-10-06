@@ -19,6 +19,22 @@ LEGACY_MACHINE_FILES = {
 }
 
 
+def correct_magnetic_probes_in_machine_dir(machine_dir: Path, magnetics: Any) -> None:
+    """Apply the historical probe corrections to a temporary machine copy."""
+    from mast_bridge.simulation.magnetic_diagnostics import (
+        correct_mast_level2_flux_loop_positions,
+        correct_mast_level2_pickup_orientations,
+    )
+
+    probe_path = MachineGeometry.load(machine_dir).files["magnetic_probes"]
+    with probe_path.open("rb") as handle:
+        payload = pickle.load(handle)
+    correct_mast_level2_flux_loop_positions(payload, magnetics)
+    correct_mast_level2_pickup_orientations(payload)
+    with probe_path.open("wb") as handle:
+        pickle.dump(payload, handle)
+
+
 class MachineConfigurationError(FileNotFoundError):
     """Raised when a complete machine description cannot be assembled."""
 

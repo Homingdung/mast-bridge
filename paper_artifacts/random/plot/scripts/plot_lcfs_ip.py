@@ -1,13 +1,10 @@
-"""单炮平衡场可视化（4 帧 R-Z）+ 下排 Ip(t)。
+"""Plot four Random-split R-Z reconstructions and a plasma-current trace.
 
-用法:
-  python plot_lcfs_ip.py --shot 21735 --model 100pct   # 默认
-  python plot_lcfs_ip.py --shot 17833 --model 5pct
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-输出：plots/random/lcfs_pred_{shot}[_5pct].png
-"""
+Compare EFIT LCFS with the largest axis-connected closed predicted surface.
+Select an archived clean fine-tuned model using --model and supply the external
+raw Zarr, machine geometry, and prediction files through the path options."""
 import argparse
+from pathlib import Path
 import json
 import pickle
 
@@ -21,11 +18,17 @@ from skimage import measure
 
 from common import PLOT_DIR, ROOT
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from plot_paths import add_plot_paths
+
 R1 = np.linspace(0.06, 1.98, 65)
 Z1 = np.linspace(-2, 2, 65)
 Rg, Zg = np.meshgrid(R1, Z1, indexing="ij")
 
-ZARR_ROOT = "/inspire/qb-ilm/project/ai-for-fusion/public/fusion-workspace/data/raw/mast"
+ZARR_ROOT = None
+PREDS_DIR = Path(__file__).resolve().parents[1] / "data/preds"
+MANIFEST = Path(__file__).resolve().parents[2] / "test/split_test_real.jsonl"
 
 
 def load_shot(shot):
@@ -100,20 +103,26 @@ def pad_psi(psi):
 
 
 def main():
+    global ZARR_ROOT, PREDS_DIR, MANIFEST, PLOT_DIR
     ap = argparse.ArgumentParser()
-    ap.add_argument("--shot", default="21735")
+    ap.add_argument("--shot", default="17833")
     ap.add_argument("--model", default="100pct", choices=["100pct", "5pct"])
+    add_plot_paths(ap, __file__, zarr=True)
     args = ap.parse_args()
+    ZARR_ROOT = str(args.zarr_root.expanduser().resolve())
+    PREDS_DIR = args.preds_dir.expanduser().resolve()
+    MANIFEST = args.manifest.expanduser().resolve()
+    PLOT_DIR = args.output_dir.expanduser().resolve()
     shot = args.shot
     model = args.model
-    run = f"tokamind-pca01sigma-finetune-{model}_best"
+    run = f"random-ft-clean-{model}-s54-lr1e4-ep150-warm10"
     suffix = "" if model == "100pct" else f"_{model}"
 
-    preds = np.load(PLOT_DIR / f"data/preds/test_predictions_{run}.npz")
+    preds = np.load(PREDS_DIR / f"test_predictions_{run}.npz")
     pred_psi = preds["pred_psi"]
     idx = {str(s): i for i, s in enumerate(preds["sample_ids"])}
 
-    rows = [json.loads(l) for l in open(ROOT / "data/manifests/training_pca_01sigma/split_test_real.jsonl")]
+    rows = [json.loads(l) for l in open(MANIFEST)]
     sshot = sorted([r for r in rows if r["shot_id"] == shot], key=lambda r: r["target_time"])
     if not sshot:
         raise SystemExit(f"shot {shot} not in test manifest")
@@ -193,7 +202,8 @@ def main():
     for s in ("top", "right"):
         ax_ip.spines[s].set_visible(False)
 
-    out = PLOT_DIR / f"random/lcfs_pred_{shot}{suffix}.png"
+    PLOT_DIR.mkdir(parents=True, exist_ok=True)
+    out = PLOT_DIR / f"lcfs_pred_{shot}{suffix}.png"
     fig.savefig(str(out), dpi=300)
     plt.close(fig)
     print(f"saved {out} (frames at {[round(r['target_time'],3) for r in frames]})")

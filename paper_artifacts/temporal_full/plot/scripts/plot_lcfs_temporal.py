@@ -1,15 +1,9 @@
-"""单炮平衡场可视化——temporal split 双臂对比版（仿 plot_lcfs_ip.py 风格）。
+"""Plot Temporal-split LCFS reconstructions for scratch and pretrained models.
 
-用法（归档内自包含，需先按 README.md 生成 data/preds/ 预测）:
-  python plot_lcfs_temporal.py --shot 29412 [--pct 5|1]
-布局：上排 = A 臂 real scratch（4 帧 R-Z），下排 = C 臂 pretrain+ft（同 4 帧），
-      第三排 = Ip(t)（共享，红虚线标记帧时刻）。
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-temporal split：训练 M5-M7（shot 11766-25017）、val M8（25605-28346）、test = M9 未来实验（28631-30451）。
-run 名 = 归档统一新名（旧名见 ../EXPERIMENTS.md 附录 A）。
-输出：out/lcfs_pred_{shot}_combined_{pct}pct.png
-"""
+Show four R-Z frames per arm and a shared Ip(t) panel with frame-time markers.
+Compare EFIT LCFS with the largest axis-connected closed predicted surface.
+Train uses M5-M7 (shots 11766-25017), Validation M8 (25605-28346), and Test M9
+(28631-30451). Generate predictions and obtain raw data before running."""
 import argparse
 import json
 import pickle
@@ -23,7 +17,11 @@ from matplotlib.patches import Rectangle
 from scipy import ndimage
 from skimage import measure
 
-BASE = Path(__file__).resolve().parents[1]  # <archive>/temporal（数据与输出根）
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from plot_paths import add_plot_paths
+
+BASE = Path(__file__).resolve().parents[1]  # Temporal plotting archive: data and output root.
 ZARR_ROOT = str(BASE / "data" / "raw" / "mast")
 PREDS_DIR = BASE / "data" / "preds"
 MANIFEST = Path(__file__).resolve().parents[2] / "test" / "split_test_real.jsonl"
@@ -117,10 +115,16 @@ def pad_psi(psi):
 
 
 def main():
+    global ZARR_ROOT, PREDS_DIR, MANIFEST, OUT_DIR
     ap = argparse.ArgumentParser()
     ap.add_argument("--shot", default="29412")
     ap.add_argument("--pct", default="5", choices=sorted(ARMS))
+    add_plot_paths(ap, __file__, zarr=True)
     args = ap.parse_args()
+    ZARR_ROOT = str(args.zarr_root.expanduser().resolve())
+    PREDS_DIR = args.preds_dir.expanduser().resolve()
+    MANIFEST = args.manifest.expanduser().resolve()
+    OUT_DIR = args.output_dir.expanduser().resolve()
     shot = args.shot
 
     arm_data = []

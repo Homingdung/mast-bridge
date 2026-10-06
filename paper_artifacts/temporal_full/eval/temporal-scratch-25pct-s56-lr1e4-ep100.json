@@ -11,7 +11,7 @@
     "rmae_global": 0.013615027810726354,
     "rmae_per_sample": 0.024414146849437577,
     "run": "temporal-scratch-25pct-s56-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-25pct-s56-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-25pct-s56-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.32874220472155363,
     "test_shots": 507

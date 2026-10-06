@@ -33,7 +33,7 @@
   "seed": "s56",
   "source_result_filename": "A_5pct_s56.json",
   "source_result_sha256": "17667739ae406d73a9df5f19d0385c6088b54f1eba6cbc657d12e8b6f291f034",
-  "source_run_directory": "/root/autodl-tmp/fusion-workspace/collab_package/extracted/collab_package/runs/shape_ood_A5pct_300epoch_convergence_3seed_20260902",
+  "source_run_directory": "runs/shape_ood_A5pct_300epoch_convergence_3seed_20260902",
   "stopped_epoch": 267,
   "test_all": {
     "nrmse_per_sample_percent": 2.3229579820109776,

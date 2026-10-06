@@ -1,16 +1,11 @@
-"""单炮平衡场可视化——random split 双臂对比版（仿 plot_lcfs_temporal.py 风格）。
+"""Plot Random-split LCFS reconstructions for scratch and pretrained models.
 
-用法:
-  python plot_lcfs_random.py --shot 17833 [--pct 1|5]
-布局：上排 = A 臂 real scratch（4 帧 R-Z），下排 = C 臂 pretrain+ft（同 4 帧），
-      中间图例行，第三排 = Ip(t)（共享，红虚线标记帧时刻）。
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-A = e500/scr500 充分收敛 scratch（§49.13/§50）；C = ft150ep+warmup10%（§50.11，`-w150`）。
-random split：test = pca01sigma 21,350 点 / 730 炮（M9 随机抽 300 炮 + 后续炮）。
-输出：plots/random/lcfs_pred_{shot}_combined_{pct}pct.png
-"""
+Show four R-Z frames per arm and a shared Ip(t) panel with frame-time markers.
+Compare EFIT LCFS with the largest axis-connected closed predicted surface.
+The Test manifest has 21,350 slices from 730 shots. Supply raw Zarr, machine
+geometry, and raw-psi prediction NPZs; paths can be set with command-line options."""
 import argparse
+from pathlib import Path
 import json
 import pickle
 
@@ -24,23 +19,29 @@ from skimage import measure
 
 from common import PLOT_DIR, ROOT
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from plot_paths import add_plot_paths
+
 R1 = np.linspace(0.06, 1.98, 65)
 Z1 = np.linspace(-2, 2, 65)
 Rg, Zg = np.meshgrid(R1, Z1, indexing="ij")
 
-ZARR_ROOT = "/inspire/qb-ilm/project/ai-for-fusion/public/fusion-workspace/data/raw/mast"
+ZARR_ROOT = None
+PREDS_DIR = Path(__file__).resolve().parents[1] / "data/preds"
+MANIFEST = Path(__file__).resolve().parents[2] / "test/split_test_real.jsonl"
 
 ARMS = {
     "5": [
-        ("real scratch 5%", "tokamind-pca01sigma-scratch-5pct-s54-scr500"),
-        ("pretrain + ft 5%", "tokamind-pca01sigma-finetune-5pct-s54-w150"),
+        ("real scratch 5%", "random-scratch-5pct-s54-lr1e4-ep500"),
+        ("pretrain + ft 5%", "random-ft-clean-5pct-s54-lr1e4-ep150-warm10"),
     ],
     "1": [
-        ("real scratch 1%", "tokamind-pca01sigma-scratch-1pct-s54-scr500"),
-        ("pretrain + ft 1%", "tokamind-pca01sigma-finetune-1pct-s54-w150"),
+        ("real scratch 1%", "random-scratch-1pct-s54-lr1e4-ep500"),
+        ("pretrain + ft 1%", "random-ft-clean-1pct-s54-lr1e4-ep150-warm10"),
     ],
 }
-MANIFEST = ROOT / "data/manifests/training_pca_01sigma/split_test_real.jsonl"
+
 
 
 def load_shot(shot):
@@ -115,15 +116,21 @@ def pad_psi(psi):
 
 
 def main():
+    global ZARR_ROOT, PREDS_DIR, MANIFEST, PLOT_DIR
     ap = argparse.ArgumentParser()
-    ap.add_argument("--shot", default="29412")
+    ap.add_argument("--shot", default="17833")
     ap.add_argument("--pct", default="5", choices=sorted(ARMS))
+    add_plot_paths(ap, __file__, zarr=True)
     args = ap.parse_args()
+    ZARR_ROOT = str(args.zarr_root.expanduser().resolve())
+    PREDS_DIR = args.preds_dir.expanduser().resolve()
+    MANIFEST = args.manifest.expanduser().resolve()
+    PLOT_DIR = args.output_dir.expanduser().resolve()
     shot = args.shot
 
     arm_data = []
     for label, run in ARMS[args.pct]:
-        preds = np.load(PLOT_DIR / f"data/preds/test_predictions_{run}.npz")
+        preds = np.load(PREDS_DIR / f"test_predictions_{run}.npz")
         arm_data.append((label, run, preds["pred_psi"], {str(s): i for i, s in enumerate(preds["sample_ids"])}))
 
     rows = [json.loads(l) for l in open(MANIFEST)]
@@ -218,7 +225,8 @@ def main():
     for s in ("top", "right"):
         ax_ip.spines[s].set_visible(False)
 
-    out = PLOT_DIR / f"random/lcfs_pred_{shot}_combined_{args.pct}pct.png"
+    PLOT_DIR.mkdir(parents=True, exist_ok=True)
+    out = PLOT_DIR / f"lcfs_pred_{shot}_combined_{args.pct}pct.png"
     fig.savefig(str(out), dpi=300)
     plt.close(fig)
     print(f"saved {out} (frames at {[round(r['target_time'],3) for r in frames]})")

@@ -1,7 +1,7 @@
 {
-  "manifest": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/data/manifests/training_pca_01sigma/subset_run_real_5pct.jsonl",
+  "manifest": "data/manifests/training_pca_01sigma/subset_run_real_5pct.jsonl",
   "feature_reference_manifest": null,
-  "feature_schema": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/mast-bridge/configs/diagnostic_features/mast_level2_common_69.json",
+  "feature_schema": "mast-bridge/configs/diagnostic_features/mast_level2_common_69.json",
   "rows": 30217,
   "train_windows": 9070,
   "val_windows": 21147,
@@ -1049,8 +1049,8 @@
   },
   "fine_tuning": {
     "method": "full",
-    "pretraining_run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/runs/tokamind-pca01sigma-synth-pretrain-noisy20-s55-sec50",
-    "pretraining_checkpoint_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/runs/tokamind-pca01sigma-synth-pretrain-noisy20-s55-sec50/checkpoints/best",
+    "pretraining_run_dir": "runs/tokamind-pca01sigma-synth-pretrain-noisy20-s55-sec50",
+    "pretraining_checkpoint_dir": "runs/tokamind-pca01sigma-synth-pretrain-noisy20-s55-sec50/checkpoints/best",
     "pretraining_checkpoint_sha256": "f04415983a346162232a50d8245a300032f4ec38773b25ba8f61635c87873079",
     "pretraining_checkpoint_epoch": 38,
     "pretraining_checkpoint_best_val": 0.04513762945211247,

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
+
 import argparse
 import concurrent.futures
 import json
@@ -9,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 sys.path.insert(0, str(SCRIPT_ROOT / "src"))
 
 from mast_bridge.equilibrium.lao_from_zarr import (

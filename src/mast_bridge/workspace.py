@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shlex
 import subprocess
 import sys
@@ -94,7 +95,7 @@ def discover_workspace(mast_bridge_root: str | Path | None = None) -> WorkspaceL
     if root.name != "mast-bridge" and (root / "mast-bridge").is_dir():
         root = (root / "mast-bridge").resolve()
 
-    workspace_root = root.parent.resolve()
+    workspace_root = Path(os.environ.get("MAST_WORKSPACE_ROOT", root.parent)).expanduser().resolve()
     external_root = (workspace_root / "external").resolve()
 
     return WorkspaceLayout(
@@ -103,7 +104,7 @@ def discover_workspace(mast_bridge_root: str | Path | None = None) -> WorkspaceL
         external_root=external_root,
         tokamind_root=_repo_root("tokamind", workspace_root, external_root),
         freegsnke_root=_repo_root("freegsnke", workspace_root, external_root),
-        data_root=(workspace_root / "data").resolve(),
+        data_root=Path(os.environ.get("MAST_DATA_ROOT", workspace_root / "data")).expanduser().resolve(),
         runs_root=(workspace_root / "runs").resolve(),
         artifacts_root=(workspace_root / "artifacts").resolve(),
     )

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Evaluate the 9 large TokaMind runs on the held-out 300-shot test manifest (test_real.jsonl).
+"""Evaluate archived TokaMind runs on an explicitly selected held-out manifest.
 
 Reports raw RMSE, raw MAE, and RMAE (relative MAE) for the 65x65 equilibrium psi field.
 """
 
 from __future__ import annotations
+
+import os
 
 import argparse
 import json
@@ -15,7 +17,7 @@ from typing import Any
 import numpy as np
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 TOKAMIND_SRC = WORKSPACE_ROOT / "external" / "tokamind" / "src"
 if TOKAMIND_SRC.is_dir() and str(TOKAMIND_SRC) not in sys.path:
     sys.path.insert(0, str(TOKAMIND_SRC))
@@ -66,6 +68,30 @@ def load_scalers(run_dir: Path) -> dict[str, np.ndarray | list[str]]:
             "target_mode": str(np.asarray(data["target_mode"]).item()),
             "input_mode": str(np.asarray(data["input_mode"]).item()),
         }
+
+
+def load_test_cache(path: Path, rows: list[dict[str, Any]], feature_names: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Validate and align a cache to the manifest; refuse a cache from another split."""
+    expected_ids = [str(row["sample_id"]) for row in rows]
+    with np.load(path.expanduser().resolve(), allow_pickle=False) as data:
+        ids = [str(value) for value in data["sample_ids"].tolist()]
+        if len(set(ids)) != len(ids) or len(set(expected_ids)) != len(expected_ids):
+            raise ValueError("Duplicate sample IDs in the manifest or test cache")
+        if set(ids) != set(expected_ids):
+            missing = len(set(expected_ids) - set(ids))
+            extra = len(set(ids) - set(expected_ids))
+            raise ValueError(f"Test cache does not match the manifest: {missing} missing and {extra} extra sample IDs")
+        if "feature_names" in data and data["feature_names"].tolist() != feature_names:
+            raise ValueError("Test cache feature order does not match the run scalers")
+        features = np.asarray(data["features"], dtype=np.float32)
+        psi = np.asarray(data["psi"], dtype=np.float32)
+        if features.shape != (len(ids), len(feature_names)) or psi.shape != (len(ids), 65, 65):
+            raise ValueError(f"Bad cache shapes: features={features.shape}, psi={psi.shape}")
+        if not np.isfinite(features).all() or not np.isfinite(psi).all():
+            raise ValueError("Test cache contains non-finite features or psi")
+        index = {sid: i for i, sid in enumerate(ids)}
+        order = [index[sid] for sid in expected_ids]
+        return features[order], psi[order]
 
 
 def resolve_lora_config(summary: dict[str, Any]):
@@ -329,10 +355,11 @@ def _build_test_cache(rows: list[dict[str, Any]], cache_dir: Path, cache_key: st
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Evaluate 9 large runs on the 300-shot real test set.")
+    parser = argparse.ArgumentParser(description="Evaluate archived runs on a held-out real-data manifest.")
     parser.add_argument("--manifest", type=Path, default=WORKSPACE_ROOT / "data/manifests/training/test_real.jsonl")
     parser.add_argument("--run-dir", type=Path, action="append")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--dataset-cache", type=Path, default=None, help="Optional features/psi NPZ; sample IDs must exactly match --manifest.")
     parser.add_argument("--output-json", type=Path, default=WORKSPACE_ROOT / "artifacts" / "tokamind_test_eval" / "test_metrics.json")
     parser.add_argument(
         "--save-predictions",
@@ -364,7 +391,11 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         raise FileNotFoundError(f"Runs without training summary: {missing}")
 
-    rows, cached_features, cached_psi = _build_test_cache(rows, args.output_json.parent, args.manifest.expanduser().resolve().stem, run_dirs)
+    if args.dataset_cache is not None:
+        scalers = load_scalers(run_dirs[0])
+        cached_features, cached_psi = load_test_cache(args.dataset_cache, rows, scalers["feature_names"])
+    else:
+        rows, cached_features, cached_psi = _build_test_cache(rows, args.output_json.parent, args.manifest.expanduser().resolve().stem, run_dirs)
     print(f"evaluating on {len(rows)} test rows ({len({r['shot_id'] for r in rows})} shots)", flush=True)
 
     results = []

@@ -1,13 +1,8 @@
-"""单炮平衡场可视化（4 帧 R-Z）+ 下排 Ip(t) —— temporal 归档内独立单模型版。
+"""Plot four Temporal-split R-Z reconstructions and a plasma-current trace.
 
-用法（归档内自包含，需先按 README.md 生成 data/preds/ 预测）:
-  python plot_lcfs_ip.py --shot 28631 --model 5pct-ft    # 默认
-  python plot_lcfs_ip.py --shot 29412 --model 5pct-scratch
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-run 名 = 归档统一新名（旧名见 ../EXPERIMENTS.md 附录 A）。
-输出：out/lcfs_pred_{shot}_{model}.png
-"""
+Compare EFIT LCFS with the largest axis-connected closed predicted surface.
+Use archived run names and generate raw-psi predictions before running.
+Raw Zarr and machine geometry must be obtained separately."""
 import argparse
 import json
 import pickle
@@ -21,7 +16,11 @@ from matplotlib.patches import Rectangle
 from scipy import ndimage
 from skimage import measure
 
-BASE = Path(__file__).resolve().parents[1]  # <archive>/temporal（数据与输出根）
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from plot_paths import add_plot_paths
+
+BASE = Path(__file__).resolve().parents[1]  # Temporal plotting archive: data and output root.
 ZARR_ROOT = str(BASE / "data" / "raw" / "mast")
 PREDS_DIR = BASE / "data" / "preds"
 MANIFEST = Path(__file__).resolve().parents[2] / "test" / "split_test_real.jsonl"
@@ -110,10 +109,16 @@ def pad_psi(psi):
 
 
 def main():
+    global ZARR_ROOT, PREDS_DIR, MANIFEST, OUT_DIR
     ap = argparse.ArgumentParser()
     ap.add_argument("--shot", default="28631")
     ap.add_argument("--model", default="5pct-ft", choices=sorted(MODELS))
+    add_plot_paths(ap, __file__, zarr=True)
     args = ap.parse_args()
+    ZARR_ROOT = str(args.zarr_root.expanduser().resolve())
+    PREDS_DIR = args.preds_dir.expanduser().resolve()
+    MANIFEST = args.manifest.expanduser().resolve()
+    OUT_DIR = args.output_dir.expanduser().resolve()
     shot = args.shot
     model = args.model
     run = MODELS[model]

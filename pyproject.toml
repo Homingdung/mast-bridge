@@ -6,9 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "mast-bridge"
 version = "0.1.0"
 description = "AI for fusion data processing, simulation augmentation, and training orchestration."
-readme = "README.md"
+readme = {text = "MAST synthetic-data equilibrium reconstruction: data processing, simulation augmentation, training, evaluation, and paper artifacts.", content-type = "text/markdown"}
 requires-python = ">=3.10,<3.14"
-dependencies = []
+dependencies = ["numpy>=1.26", "scipy>=1.11", "zarr>=3,<4"]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.8", "scikit-image>=0.22"]
+training = ["torch>=2.2", "torchvision", "einops"]
 
 [project.scripts]
 mast-bridge-bootstrap = "mast_bridge.workspace:bootstrap_main"

@@ -9,6 +9,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
+from mast_bridge.paths import resolve_manifest_row
 from mast_bridge.dataset.splits import assign_parent_shot_splits, split_for_row
 from mast_bridge.simulation.magnetic_diagnostics import (
     observed_flux_loop_signals,
@@ -33,13 +34,13 @@ INPUT_MODES = {INPUT_LAO_PARAMS, INPUT_MAGNETIC_DIAGNOSTICS}
 FEATURE_SCHEMA_VERSION = 1
 
 
-def load_manifest_rows(path: str | Path) -> list[dict[str, Any]]:
-    """Load JSONL manifest rows."""
+def load_manifest_rows(path: str | Path, workspace_root: str | Path | None = None) -> list[dict[str, Any]]:
+    """Load JSONL rows and resolve their data paths against the reader's workspace."""
     manifest_path = Path(path).expanduser().resolve()
     rows: list[dict[str, Any]] = []
     for line in manifest_path.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            rows.append(json.loads(line))
+            rows.append(resolve_manifest_row(json.loads(line), workspace_root))
     return rows
 
 

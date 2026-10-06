@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Shape-OOD 步骤 [0]+[1]+[2]：Real/Synth LCFS 提取 + topology + δu/δl 计算。
+"""Extract Real/Synthetic LCFS geometry, topology, and upper/lower triangularity.
 
-Real pass:   zarr equilibrium/lcfs_r,lcfs_z（权威 EFIT label）+ x_point_r（topology）
-Synthetic:   equilibrium.npz 的 psi/psi_axis/psi_bndry → 固定 level + axis-connected core
-             （§16 已验证方法：O 点连通区 + skimage find_contours）
-canonical:   去重 → CCW → max(R)起点 → 弧长 170 点（implicit closure）
-δ:           R_geo/a + 局部二次插值极值精化（raw + refined）
-输出:        data/processed/shape_ood/{real,synthetic}_shape_metadata.jsonl
-"""
+Real: use equilibrium/lcfs_r, lcfs_z (EFIT labels) and x_point_r (topology).
+Synthetic: use psi, psi_axis, and psi_bndry from equilibrium.npz to extract
+the axis-connected core at a fixed level, with a dynamic-scan fallback.
+Canonicalize by removing duplicates, orienting counterclockwise, starting at
+maximum R, and resampling 170 equally spaced arc-length points (implicit closure).
+Compute raw and refined triangularity using local quadratic extrema refinement.
+Write data/processed/shape_ood/{real,synthetic}_shape_metadata.jsonl."""
 from __future__ import annotations
+
+import os
 
 import argparse
 import concurrent.futures
@@ -19,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_ROOT = SCRIPT_ROOT.parent
+WORKSPACE_ROOT = Path(os.environ.get("MAST_WORKSPACE_ROOT", SCRIPT_ROOT.parent)).expanduser().resolve()
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 if str(SCRIPT_ROOT / "src") not in sys.path:
@@ -38,7 +40,7 @@ OUTDIR = WORKSPACE_ROOT / "data/processed/shape_ood"
 
 
 def canonical_lcfs(r: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """去重 → CCW → max(R)起点 → 弧长均匀重采样 170 点（implicit closure）。"""
+    """Remove duplicates, orient CCW, start at max(R), and resample 170 points."""
     r = np.asarray(r, float)
     z = np.asarray(z, float)
     if r.size != z.size or r.size < 10:
@@ -73,7 +75,7 @@ def canonical_lcfs(r: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray
 
 
 def lcfs_delta(r: np.ndarray, z: np.ndarray) -> dict:
-    """δu/δl（raw + refined），R_geo/a + 局部二次插值精化极值。"""
+    """Compute raw/refined upper and lower triangularity with quadratic extrema."""
     r, z = np.asarray(r, float), np.asarray(z, float)
     out: dict = {"lcfs_valid": False, "failure_reason": None}
     if r.size != z.size or r.size < N_CANONICAL * 0.5:
@@ -192,7 +194,7 @@ def synth_row(row: dict) -> dict:
                 core = None
         method = "fixed_psi_bndry"
         if core is None:
-            # 回退：动态扫描（§16 已验证）——从 psi_max 向下扫 level，泄漏到网格边界前最大闭合面
+            # Fallback: scan down from psi_max for the largest closed core before boundary leakage.
             method = "fallback_dynamic_scan"
             best = None
             best_area = 0

@@ -1,5 +1,10 @@
 # Copy to configs/paths.local.yaml or run:
-#   python scripts/bootstrap_workspace.py --write-config
+#   mast-bridge-bootstrap --write-config
+#
+# Script path resolution uses MAST_WORKSPACE_ROOT (the directory containing
+# mast-bridge, external, data, runs, and artifacts). MAST_DATA_ROOT optionally
+# overrides the data root in manifest loading and plotting. This YAML records
+# the discovered layout; scripts do not automatically read it.
 #
 # The recommended reader workflow is:
 #   mkdir fusion-workspace

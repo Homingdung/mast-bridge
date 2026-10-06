@@ -11,7 +11,7 @@
     "rmae_global": 0.028245632920138822,
     "rmae_per_sample": 0.05029979808307111,
     "run": "temporal-scratch-1pct-s54-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-1pct-s54-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-1pct-s54-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.6339296115277561,
     "test_shots": 507
@@ -28,7 +28,7 @@
     "rmae_global": 0.028440642017754283,
     "rmae_per_sample": 0.05063282369547428,
     "run": "temporal-scratch-1pct-s55-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-1pct-s55-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-1pct-s55-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.6439226172655448,
     "test_shots": 507
@@ -45,7 +45,7 @@
     "rmae_global": 0.02815334233702021,
     "rmae_per_sample": 0.05015345586114167,
     "run": "temporal-scratch-1pct-s56-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-scratch-1pct-s56-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-scratch-1pct-s56-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.6382537724315658,
     "test_shots": 507
@@ -62,7 +62,7 @@
     "rmae_global": 0.00815706604638228,
     "rmae_per_sample": 0.015036668329993631,
     "run": "temporal-ft-1pct-s54-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-1pct-s54-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-ft-1pct-s54-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.2117156696674894,
     "test_shots": 507
@@ -79,7 +79,7 @@
     "rmae_global": 0.009118531323843902,
     "rmae_per_sample": 0.016760645721988824,
     "run": "temporal-ft-1pct-s55-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-1pct-s55-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-ft-1pct-s55-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.23266338425109778,
     "test_shots": 507
@@ -96,7 +96,7 @@
     "rmae_global": 0.009746698809034452,
     "rmae_per_sample": 0.017965453826116036,
     "run": "temporal-ft-1pct-s56-lr1e4-ep100",
-    "run_dir": "/inspire/qb-ilm/project/ai-for-fusion/public/collab_package/paper_artifacts/temporal_full/checkpoints/temporal-ft-1pct-s56-lr1e4-ep100",
+    "run_dir": "paper_artifacts/temporal_full/checkpoints/temporal-ft-1pct-s56-lr1e4-ep100",
     "samples": 17498,
     "std_rmse_per_sample_mean": 0.23880951067556175,
     "test_shots": 507
