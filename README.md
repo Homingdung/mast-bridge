@@ -1,89 +1,72 @@
-# mast-bridge — MAST synthetic-data equilibrium reconstruction (paper repository)
+# ![MAST Bridge](docs/assets/title-banner.svg)
 
-Real MAST data + FreeGSNKE synthetic equilibria (PCA ±0.1σ, EFIT-anchored filtering)
-train a TokaMind-style network mapping 69 magnetic-diagnostic channels → 65×65 flux map ψ.
-This repository holds the latest code together with per-run evaluation results and
-dataset-split metadata for the two main studies (random split and temporal split).
-Authoritative experiment log: `progress2.md` (§59 paper tables, §58.3 generalization
-conclusions, §53 status); quick overview: `paper_artifacts/EXPERIMENTS.md`.
+Learn in simulation, reconstruct real tokamak equilibria.
 
-## Repository layout
+![Synthetic pretraining on FreeGSNKE data, fine-tuning on MAST data with EFIT targets, and tokamak equilibrium reconstruction.](docs/assets/pretraining-finetuning.png)
 
-```
-├── README.md / progress2.md / paper_artifacts/EXPERIMENTS.md / PLOT_STYLE.md
-├── configs/           # diagnostic feature schemas, noise profiles, machine geometry
-├── scripts/           # data generation, filtering, caching, training & evaluation
-├── src/               # mast_bridge python package (datasets, solver wrappers)
-├── pyproject.toml
-└── paper_artifacts/   # per-run evaluation results + dataset splits (curated, see below)
-    ├── random/                 # random-split experiment
-    │   ├── README.md           #   run naming, configs, data sources
-    │   ├── eval/<run>.json     #   per-run metrics on test 21,350 slices / 730 shots
-    │   ├── dataset_split*.csv  #   slice/shot-level split lists (213,924 rows)
-    │   ├── test/split_test_real.jsonl
-    │   └── plot/               # figure scripts + README (outputs not committed)
-    ├── temporal_full/          # temporal-split experiment
-    │   ├── README.md / eval/<run>.json / dataset_split* / test/split_test_real.jsonl
-    │   └── plot/               # figure scripts + README (outputs not committed)
-    └── PLOT_STYLE.md           # figure style conventions
-```
 
-## Environment & data
+## Experiments
 
-- Two python venvs are used and **not committed**: `.tokamind-train-env` (training/
-  evaluation) and `.freegsnke-solve-env` (FreeGSNKE solving/feature extraction).
-  Reproduce: `python -m venv` + install `pyproject.toml` deps; solver env additionally
-  needs freegsnke + the tokamak equilibrium input files (see `configs/`).
-- Raw MAST zarr data come from FAIR-MAST (S3); training caches (npz), model checkpoints
-  and test caches (npz) are **not committed** (GitHub 100 MB/file limit). They live in
-  the original collab workspace (`data/`, `runs/`,
-  `paper_artifacts/{random,temporal_full}/checkpoints|test/*.npz`) and can be re-created
-  with `scripts/build_cache_batched.py` etc.; the `eval/*.json` here are sufficient to
-  reproduce every number in the paper tables, and the checkpoints/test caches reproduce
-  them by re-running `scripts/evaluate_tokamind_testset.py`.
-- Full authoritative experiment log: `progress2.md` — §53 status, §59 paper tables,
-  §58.3 generalization conclusions, §57 1%-tier seed handling.
+The experiments compare training on real data from scratch with synthetic
+pretraining followed by fine-tuning, using 1–100% of the real training data.
 
-## External dependency: tokamind (MMT model zoo) — required for training/eval
+| Study | Evaluation setting | Artifacts |
+|---|---|---|
+| Random split | Random partition of shots into training, validation, and test sets | [random](paper_artifacts/random/README.md) |
+| Temporal split | Training on earlier campaigns and testing on a later campaign | [temporal_full](paper_artifacts/temporal_full/README.md) |
+| Shape-OOD | Generalization to held-out diverted plasma geometries | [shape_ood](paper_artifacts/shape_ood/README.md) |
 
-The training and evaluation scripts (`scripts/train_tokamind_manifest.py`,
-`scripts/evaluate_tokamind_testset.py`) import the `mmt` package (MultiModal
-Transformer) from the sibling checkout **`external/tokamind`**:
+Each study provides evaluation results, dataset split metadata, test manifests,
+and figure scripts under `paper_artifacts/`.
 
-```python
-# both scripts resolve the workspace root as two levels above the script dir and,
-# if present, prepend it to sys.path (no pip install of mmt itself required):
-TOKAMIND_SRC = WORKSPACE_ROOT / "external" / "tokamind" / "src"
+## Repository structure
+
+```text
+configs/          Diagnostic schemas and experiment configuration
+scripts/          Data preparation, synthetic generation, training, and evaluation
+src/mast_bridge/  Data readers, equilibrium solvers, and model utilities
+paper_artifacts/  Results, dataset splits, and plotting scripts for each study
 ```
 
-Setup:
+## Installation
+
+Use Python 3.10–3.13. From the repository root:
 
 ```bash
-# 1. from the repository root, clone tokamind as a sibling directory
-git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git external/tokamind
-
-# 2. (optional but recommended) pin the commit used for the paper results
-cd external/tokamind && git checkout 0b67cf56cd945b883fd3b0c9050cdfc560f98533 && cd ../..
-
-# 3. make sure mmt's runtime dependencies are installed in the training venv
-#    (torch, torchvision, einops, ... — see external/tokamind/pyproject.toml);
-#    `pip install -e external/tokamind` works as well and makes `import mmt`
-#    resolvable even outside the scripts' sys.path hook.
+python -m venv .venv
+source .venv/bin/activate
+mkdir -p ../external
+git clone https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind.git ../external/tokamind
+git -C ../external/tokamind checkout 0b67cf56cd945b883fd3b0c9050cdfc560f98533
+python -m pip install -e . -e ../external/tokamind numpy zarr
 ```
 
-- The scripts still need the MAST workspace layout: they must be launched from a root
-  that has `external/tokamind/` next to `mast-bridge/` (or the equivalent
-  `scripts/`/`configs/` layout, as in this repo).
-- If `external/tokamind` is absent, both scripts **fail at import time** with
-  `ModuleNotFoundError: No module named 'mmt'` — this is expected; follow the steps
-  above. A copy of the pinned tokamind checkout is included in the original collab
-  workspace (`external/tokamind/`, commit `0b67cf56`) if you need the exact tree.
+The pinned TokaMind revision supplies the `mmt` package used for training and
+evaluation. Synthetic equilibrium generation additionally requires FreeGSNKE
+and MAST machine geometry inputs.
 
-## For collaborators
+## Data and reproduction
 
-Branch off `main` for new studies (e.g., Shape-OOD). Follow the naming/config conventions
-in `paper_artifacts/EXPERIMENTS.md` §2-3; keep per-run eval jsons in
-`paper_artifacts/<study>/eval/` and figure-regeneration scripts in `.../plot/`. Data/split
-conventions for Shape-OOD (LCFS canonicalization, δu/δl, OOD definition) are documented
-in `progress2.md` §20 and the workflow doc
-`Plasma_Shape_OOD_Workflow_v2_Detailed_LCFS.md` (available in the original workspace).
+Raw MAST data are sourced from FAIR-MAST and must be obtained separately.
+Training and test caches are not included. Checkpoints and normalization scalers
+are included for the random and temporal studies; Shape-OOD provides evaluation
+summaries without checkpoints.
+
+To rerun an evaluation, use the corresponding checkpoint and test manifest.
+Update the manifest's `data_path` entries to your local MAST data locations, or
+place the matching test cache at
+`<output-directory>/test_cache_<manifest-stem>.npz`.
+
+For example, with the temporal test data prepared:
+
+```bash
+mkdir -p outputs/temporal
+python scripts/evaluate_tokamind_testset.py \
+  --manifest paper_artifacts/temporal_full/test/split_test_real.jsonl \
+  --run-dir paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s54-lr1e4-ep100 \
+  --output-json outputs/temporal/result.json
+```
+
+Compare the output with the corresponding JSON file in the study's `eval/`
+directory. Study-specific configurations and figure reproduction instructions
+are documented in the linked artifact directories.
