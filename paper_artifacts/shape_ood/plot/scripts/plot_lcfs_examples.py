@@ -17,4 +17,4 @@ for ax,case in zip(axs[0],cases):
         r=json.loads(row['lcfs_r']);z=json.loads(row['lcfs_z']);ax.plot(r,z,color=color,ls=ls,lw=1.8,label=label)
     ax.set_aspect('equal',adjustable='box');ax.set_title(f"Case {case['case_id']}",fontsize=10);axes_style(ax)
     ax.set_xlabel('R (m)');
-axs[0].set_ylabel('Z (m)');handles,labels=axs[0].get_legend_handles_labels();fig.legend(handles,labels,ncol=3,frameon=False,loc='upper center',bbox_to_anchor=(.5,1.06));fig.tight_layout();finish(fig,args.output_dir,'shape_ood_lcfs_examples');plt.close(fig)
+axs[0,0].set_ylabel('Z (m)');handles,labels=axs[0,0].get_legend_handles_labels();fig.legend(handles,labels,ncol=3,frameon=False,loc='upper center',bbox_to_anchor=(.5,1.06));fig.tight_layout();finish(fig,args.output_dir,'shape_ood_lcfs_examples');plt.close(fig)
