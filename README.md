@@ -4,29 +4,16 @@ Learn in simulation, reconstruct real tokamak equilibria.
 
 ![Synthetic pretraining on FreeGSNKE data, fine-tuning on MAST data with EFIT targets, and tokamak equilibrium reconstruction.](docs/assets/pretraining-finetuning.png)
 
-
 ## Experiments
 
 The experiments compare training on real data from scratch with synthetic
 pretraining followed by fine-tuning, using 1–100% of the real training data.
 
-| Study | Evaluation setting | Artifacts |
-|---|---|---|
-| Random split | Random partition of shots into training, validation, and test sets | [random](paper_artifacts/random/README.md) |
-| Temporal split | Training on earlier campaigns and testing on a later campaign | [temporal_full](paper_artifacts/temporal_full/README.md) |
-| Shape-OOD | Generalization to held-out diverted plasma geometries | [shape_ood](paper_artifacts/shape_ood/README.md) |
-
-Each study provides evaluation results, dataset split metadata, test manifests,
-and figure scripts under `paper_artifacts/`.
-
-## Repository structure
-
-```text
-configs/          Diagnostic schemas and experiment configuration
-scripts/          Data preparation, synthetic generation, training, and evaluation
-src/mast_bridge/  Data readers, equilibrium solvers, and model utilities
-paper_artifacts/  Results, dataset splits, and plotting scripts for each study
-```
+| Study | Evaluation setting |
+|---|---|
+| Random split | Random partition of shots into training, validation, and test sets |
+| Temporal split | Training on earlier campaigns and testing on a later campaign |
+| Shape-OOD | Generalization to held-out diverted plasma geometries |
 
 ## Installation
 
@@ -45,28 +32,18 @@ The pinned TokaMind revision supplies the `mmt` package used for training and
 evaluation. Synthetic equilibrium generation additionally requires FreeGSNKE
 and MAST machine geometry inputs.
 
-## Data and reproduction
+## Evaluation
 
-Raw MAST data are sourced from FAIR-MAST and must be obtained separately.
-Training and test caches are not included. Checkpoints and normalization scalers
-are included for the random and temporal studies; Shape-OOD provides evaluation
-summaries without checkpoints.
+Real MAST data are sourced from FAIR-MAST. Evaluation requires a trained model,
+normalization scalers, and a test manifest with local data paths or a matching cache.
 
-To rerun an evaluation, use the corresponding checkpoint and test manifest.
-Update the manifest's `data_path` entries to your local MAST data locations, or
-place the matching test cache at
-`<output-directory>/test_cache_<manifest-stem>.npz`.
-
-For example, with the temporal test data prepared:
+With the model and test data prepared:
 
 ```bash
-mkdir -p outputs/temporal
 python scripts/evaluate_tokamind_testset.py \
-  --manifest paper_artifacts/temporal_full/test/split_test_real.jsonl \
-  --run-dir paper_artifacts/temporal_full/checkpoints/temporal-ft-5pct-s54-lr1e4-ep100 \
-  --output-json outputs/temporal/result.json
+  --manifest /path/to/test_manifest.jsonl \
+  --run-dir /path/to/model_run \
+  --output-json outputs/result.json
 ```
 
-Compare the output with the corresponding JSON file in the study's `eval/`
-directory. Study-specific configurations and figure reproduction instructions
-are documented in the linked artifact directories.
+The output reports reconstruction errors for the poloidal flux field.
