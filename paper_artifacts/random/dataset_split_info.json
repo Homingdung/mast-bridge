@@ -1,11 +1,11 @@
 {
   "experiment": "random",
   "generated": "2026-09-02",
-  "split_rule": "逐炮随机划分（同一炮池）：train 5828 炮全 slice，val 728 炮/21147 slice，test 730 炮/21350 slice（train/val/test 无交集）。档位=按 train 炮数比例抽样且嵌套（1⊂5⊂10⊂25⊂50⊂100）；实验 = §49.13（e500）/ §50（ft150, w150）/ §52.2。",
+  "split_rule": "Shot-level random partition of a shared shot pool: train uses all slices from 5828 shots; validation contains 728 shots / 21147 slices; test contains 730 shots / 21350 slices. Train, validation, and test shots are disjoint. Training fractions are nested shot subsets (1 < 5 < 10 < 25 < 50 < 100 percent).",
   "phase_composition": {
-    "train": "分档位炮子集（含 val 无训练样本外的全部 slice）",
-    "val": "全量",
-    "test": "全量"
+    "train": "All training slices from the shot subset selected for each data fraction",
+    "val": "Complete validation set",
+    "test": "Complete test set"
   },
   "fractions_nested": [
     "1%",
@@ -28,5 +28,5 @@
   },
   "val_rows": 21147,
   "test_rows": 21350,
-  "notes": "训练时 run manifest 用 subset_run_real_{f}pct（含全量 val 行，run 窗用）；模型训练切片集 = train 行"
+  "notes": "Training run manifests use subset_run_real_{f}pct and include all validation rows; only training-phase rows are used as training samples."
 }

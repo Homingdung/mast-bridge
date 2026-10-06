@@ -1,11 +1,12 @@
-"""(Random split psi 逐样本均值散点，风格规范 = paper_artifacts/PLOT_STYLE.md §psi-scatter)。
+"""Plot mean flux per sample for the random-split experiment.
 
-A(scratch e500) vs C(ft w150 clean) × 5%/1%。口径 = progress2 §13 图 1：
-每样本 65×65 网格取均值（~21,350 点）+ hexbin(gridsize=80) + y=x；R = 逐样本均值 corr。
-（网格点采样版 = 同目录 plot_psi_grid_points.py，像素级 0.2% 采样 gs=200。）
-数据：data/preds/test_predictions_<run 新名>.npz（evaluate --save-predictions 生成，raw psi）
-run 名 = 归档统一新名（旧名对照 = ../EXPERIMENTS.md 附录 A）。
-输出：out/psi_scatter_combined_1_5pct.png（2×2：行 A/C、列 5%/1%）
+Compare scratch and clean fine-tuned models at 5% and 1% real-data fractions.
+Average each 65 x 65 grid, yielding approximately 21,350 points, and draw an
+80-bin hexbin plot with an identity line. R is the correlation of sample means.
+For pixel-level comparisons, use plot_psi_grid_points.py.
+Input: data/preds/test_predictions_<run>.npz from evaluation --save-predictions.
+Output: out/psi_scatter_combined_1_5pct.png, with scratch/fine-tuning rows
+and 5%/1% columns.
 """
 from pathlib import Path
 

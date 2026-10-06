@@ -1,11 +1,12 @@
-"""单炮平衡场可视化（4 帧 R-Z）+ 下排 Ip(t)。
+"""Plot four R-Z equilibrium frames and the plasma-current trace for one shot.
 
-用法:
-  python plot_lcfs_ip.py --shot 21735 --model 100pct   # 默认
-  python plot_lcfs_ip.py --shot 17833 --model 5pct
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-输出：plots/random/lcfs_pred_{shot}[_5pct].png
+Usage:
+    python plot_lcfs_ip.py --shot 21735 --model 100pct
+    python plot_lcfs_ip.py --shot 17833 --model 5pct
+Each frame shows predicted flux contours, machine components, the EFIT LCFS
+in blue, and the predicted boundary as an orange dashed line. The boundary is
+estimated by scanning closed flux surfaces connected to the magnetic axis.
+Output: plots/random/lcfs_pred_{shot}[_5pct].png.
 """
 import argparse
 import json

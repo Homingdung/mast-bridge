@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""PCA 0.1σ 全量求解分片 worker。
+"""Solve one manifest shard of PCA 0.1-sigma synthetic equilibrium variants.
 
-每个 shard 处理 manifest 的一行区间，按炮分组炮内时间序 warm start，
-逐片调用 run_freegsnke_forward.py（绝对参数注入）。断点续跑（已有
-metadata.json 的跳过）。进度写入 jsonl 日志。
+Group the shard's row interval by shot and use warm starts in time order within
+each shot. Call run_freegsnke_forward.py for each slice with absolute parameters.
+Resume by skipping slices that already have metadata.json. Log progress as JSONL.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def main() -> int:
     rows = list(csv.DictReader(args.csv.open()))[args.start : args.end]
     print(f"[shard] rows {args.start}:{args.end} = {len(rows)}", flush=True)
 
-    # 按炮分组、炮内时间序
+    # Group by shot and sort each shot by time.
     by_shot: dict[str, list[dict]] = {}
     for r in rows:
         by_shot.setdefault(r["shot"], []).append(r)

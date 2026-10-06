@@ -1,12 +1,12 @@
-"""单炮平衡场可视化（4 帧 R-Z）+ 下排 Ip(t) —— temporal 归档内独立单模型版。
+"""Plot four R-Z equilibrium frames and the plasma-current trace for one temporal-test shot.
 
-用法（归档内自包含，需先按 README.md 生成 data/preds/ 预测）:
-  python plot_lcfs_ip.py --shot 28631 --model 5pct-ft    # 默认
-  python plot_lcfs_ip.py --shot 29412 --model 5pct-scratch
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-run 名 = 归档统一新名（旧名见 ../EXPERIMENTS.md 附录 A）。
-输出：out/lcfs_pred_{shot}_{model}.png
+Prepare predictions in data/preds/ before running:
+    python plot_lcfs_ip.py --shot 28631 --model 5pct-ft
+    python plot_lcfs_ip.py --shot 29412 --model 5pct-scratch
+Each frame shows predicted flux contours, machine components, the EFIT LCFS
+in blue, and the predicted boundary as an orange dashed line. The boundary is
+estimated by scanning closed surfaces connected to the magnetic axis.
+Output: out/lcfs_pred_{shot}_{model}.png.
 """
 import argparse
 import json
@@ -21,7 +21,7 @@ from matplotlib.patches import Rectangle
 from scipy import ndimage
 from skimage import measure
 
-BASE = Path(__file__).resolve().parents[1]  # <archive>/temporal（数据与输出根）
+BASE = Path(__file__).resolve().parents[1]  # Temporal archive root for data and outputs.
 ZARR_ROOT = str(BASE / "data" / "raw" / "mast")
 PREDS_DIR = BASE / "data" / "preds"
 MANIFEST = Path(__file__).resolve().parents[2] / "test" / "split_test_real.jsonl"

@@ -1,14 +1,14 @@
-"""单炮平衡场可视化——random split 双臂对比版（仿 plot_lcfs_temporal.py 风格）。
+"""Compare scratch and fine-tuned equilibrium reconstructions for a random-split shot.
 
-用法:
-  python plot_lcfs_random.py --shot 17833 [--pct 1|5]
-布局：上排 = A 臂 real scratch（4 帧 R-Z），下排 = C 臂 pretrain+ft（同 4 帧），
-      中间图例行，第三排 = Ip(t)（共享，红虚线标记帧时刻）。
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-A = e500/scr500 充分收敛 scratch（§49.13/§50）；C = ft150ep+warmup10%（§50.11，`-w150`）。
-random split：test = pca01sigma 21,350 点 / 730 炮（M9 随机抽 300 炮 + 后续炮）。
-输出：plots/random/lcfs_pred_{shot}_combined_{pct}pct.png
+Usage: python plot_lcfs_random.py --shot 17833 [--pct 1|5]
+The first row shows four scratch-model R-Z frames; the second shows matching
+fine-tuned frames. A shared legend and plasma-current trace complete the plot;
+red dashed lines mark the selected frame times. Each frame includes predicted
+flux contours, machine components, the EFIT LCFS, and the predicted boundary.
+The boundary is estimated from closed surfaces connected to the magnetic axis.
+Scratch runs use a 500-epoch cap; fine-tuning uses 150 epochs and 10% warmup.
+The random test split contains 21,350 slices from 730 shots.
+Output: plots/random/lcfs_pred_{shot}_combined_{pct}pct.png.
 """
 import argparse
 import json

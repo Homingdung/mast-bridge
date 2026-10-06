@@ -1,13 +1,15 @@
-"""计算 j_tor–Ip 散点所需的 (Ip_meas, Ip_pred) 数组（每 test slice 一点）。
+"""Compute measured and predicted plasma-current pairs for each test slice.
 
-依赖全量 shot zarr（j_phi/ip/equilibrium 帧），仅 workspace 可跑；产物 npz 归档后，
-画图只需 plot_jtor_ip_combined.py（无 zarr 依赖）。
-方法：Δ*ψ = d²ψ/dR² − (1/R)dψ/dR + d²ψ/dZ²（2 阶中心差分，内部 63×63）；
-     J_φ = −Δ*ψ/(μ₀R)；Ip_pred = Σ_mask J_φ dR dZ；mask = EFIT j_φ 帧内 > 帧max×1e-3；
-参考 Ip = 罗氏线圈 magnetics/ip 在 target_time 插值。
-run 名 = 归档统一新名（旧名对照 = ../EXPERIMENTS.md 附录 A）。
-用法: python compute_jtor_pairs.py [--zarr-root <fusion-workspace/data/raw/mast>]
-输出: data/jtor_ip_pairs.npz（keys = run 新名 → {'meas_ma':..., 'pred_ma':...}）
+Requires complete shot Zarr data, including j_phi, ip, and equilibrium frames.
+The resulting NPZ is plotted by plot_jtor_ip_combined.py without reading Zarr.
+Use second-order central differences on the interior 63 x 63 grid:
+    Delta*psi = d2psi/dR2 - (1/R)dpsi/dR + d2psi/dZ2
+    J_phi = -Delta*psi/(mu_0 R)
+Integrate J_phi over the mask where EFIT j_phi exceeds 1e-3 of its frame maximum.
+Reference Ip is interpolated from the Rogowski-coil magnetics/ip signal.
+
+Usage: python compute_jtor_pairs.py [--zarr-root <data/raw/mast>]
+Output: data/jtor_ip_pairs.npz, keyed by run name with meas_ma and pred_ma arrays.
 """
 import argparse
 import json
@@ -44,7 +46,7 @@ def lapstar(psi):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zarr-root", required=True,
-                    help="含 <shot>.zarr 与 equilibrium/j_phi 的全量数据目录")
+                    help="Directory containing complete <shot>.zarr data and equilibrium/j_phi")
     args = ap.parse_args()
     ZARR = Path(args.zarr_root)
 

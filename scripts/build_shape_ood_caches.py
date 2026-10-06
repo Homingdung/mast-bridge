@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Shape-OOD 步骤 [6] 准备：嵌套子集 manifest + cache 切片 + 合成预训练 cache。
+"""Prepare nested Shape-OOD manifests and caches for real and synthetic data.
 
-- subsets: 从 split_train_real.jsonl（diverted train 176,319 行）按炮分层嵌套抽 50/25/5%，
-  拼接 shape_ood val（2,835 行）→ subset_run_real_{f}pct.jsonl（run 版，与 §19 模式一致）
-- caches: 从 real_full.npz 按 sample_id 切片 → subset_run_real_{f}pct.npz
-- synth C: split_synth_pretrain.jsonl → synth_ood_pretrain_clean.npz（从 synth_pretrain_clean.npz 切片）
-- test caches: split_test_real.jsonl → test_real.npz；split_test_ood_only_real.jsonl → test_ood_only_real.npz
+Sample nested 50%/25%/5% shot subsets from the 176,319 diverted training slices.
+Append all 2,835 validation slices to each subset_run_real_{f}pct.jsonl manifest.
+Slice real_full.npz by sample_id to create the corresponding subset caches.
+Slice synth_pretrain_clean.npz using split_synth_pretrain.jsonl to build
+synth_ood_pretrain_clean.npz. Create test_real.npz and test_ood_only_real.npz
+from the respective test manifests.
 """
 from __future__ import annotations
 
@@ -60,7 +61,7 @@ def main() -> int:
         print(f"subset {frac}%: train_rows={len(sel)} + val={len(val_rows)} = {len(run_rows)}", flush=True)
         run_slice("real_full.npz", f"subset_run_real_{frac}pct.jsonl", f"subset_run_real_{frac}pct.npz")
 
-    # 合成预训练 cache
+    # Synthetic pretraining cache.
     run_slice("synth_pretrain_clean.npz", "split_synth_pretrain.jsonl", "synth_ood_pretrain_clean.npz")
     # test caches
     run_slice("real_full.npz", "split_test_real.jsonl", "test_real.npz")

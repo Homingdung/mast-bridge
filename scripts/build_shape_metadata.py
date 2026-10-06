@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Shape-OOD 步骤 [0]+[1]+[2]：Real/Synth LCFS 提取 + topology + δu/δl 计算。
+"""Extract LCFS geometry, topology, and upper/lower triangularity for Shape-OOD.
 
-Real pass:   zarr equilibrium/lcfs_r,lcfs_z（权威 EFIT label）+ x_point_r（topology）
-Synthetic:   equilibrium.npz 的 psi/psi_axis/psi_bndry → 固定 level + axis-connected core
-             （§16 已验证方法：O 点连通区 + skimage find_contours）
-canonical:   去重 → CCW → max(R)起点 → 弧长 170 点（implicit closure）
-δ:           R_geo/a + 局部二次插值极值精化（raw + refined）
-输出:        data/processed/shape_ood/{real,synthetic}_shape_metadata.jsonl
+Real data use EFIT equilibrium/lcfs_r, lcfs_z, and x_point_r from shot Zarr.
+Synthetic data use psi, psi_axis, and psi_bndry from equilibrium.npz, with a
+fixed contour level and an axis-connected core extracted by find_contours.
+Canonicalization removes duplicates, enforces counterclockwise orientation,
+starts at maximum R, and resamples 170 equally spaced arc-length points.
+Compute raw and refined triangularity using R_geo/a and local quadratic fits.
+Output: data/processed/shape_ood/{real,synthetic}_shape_metadata.jsonl.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ OUTDIR = WORKSPACE_ROOT / "data/processed/shape_ood"
 
 
 def canonical_lcfs(r: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """去重 → CCW → max(R)起点 → 弧长均匀重采样 170 点（implicit closure）。"""
+    """Deduplicate, orient counterclockwise, start at maximum R, and resample 170 arc-length points with implicit closure."""
     r = np.asarray(r, float)
     z = np.asarray(z, float)
     if r.size != z.size or r.size < 10:
@@ -73,7 +74,7 @@ def canonical_lcfs(r: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray
 
 
 def lcfs_delta(r: np.ndarray, z: np.ndarray) -> dict:
-    """δu/δl（raw + refined），R_geo/a + 局部二次插值精化极值。"""
+    """Compute raw and refined upper/lower triangularity using R_geo/a and quadratic extremum refinement."""
     r, z = np.asarray(r, float), np.asarray(z, float)
     out: dict = {"lcfs_valid": False, "failure_reason": None}
     if r.size != z.size or r.size < N_CANONICAL * 0.5:
@@ -192,7 +193,7 @@ def synth_row(row: dict) -> dict:
                 core = None
         method = "fixed_psi_bndry"
         if core is None:
-            # 回退：动态扫描（§16 已验证）——从 psi_max 向下扫 level，泄漏到网格边界前最大闭合面
+            # Fallback: scan down from psi_max and retain the largest closed surface before it reaches the grid boundary.
             method = "fallback_dynamic_scan"
             best = None
             best_area = 0

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""limiter 版 Shape-OOD split：topology=limited，OOD = delta_asym > P90。
-输出 shape_ood_limiter/ 目录：split train/val/test/test_ood_only + subsets 100/50/25 + synth C。
+"""Build a Shape-OOD split for limited topology, with OOD defined by delta_asym > P90.
+
+Write train, validation, test, and OOD-only test manifests under shape_ood_limiter/,
+plus nested 100%/50%/25% subsets and the synthetic pretraining manifest.
 """
 from __future__ import annotations
 
@@ -70,7 +72,7 @@ def main() -> int:
     n_te = dump(test_shots, "split_test_real.jsonl")
     n_ood = dump(test_shots, "split_test_ood_only_real.jsonl", ood_only=True)
 
-    # subsets 100/50/25（嵌套按炮 + val）
+    # Nested 100%/50%/25% shot subsets with validation rows.
     val_rows = [json.loads(l) for l in (OUT / "split_val_real.jsonl").open()]
     train_rows = [json.loads(l) for l in (OUT / "split_train_real.jsonl").open()]
     by_shot = {}

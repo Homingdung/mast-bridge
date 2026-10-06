@@ -1,14 +1,15 @@
-"""单炮平衡场可视化——temporal split 双臂对比版（仿 plot_lcfs_ip.py 风格）。
+"""Compare scratch and fine-tuned equilibrium reconstructions for a temporal-test shot.
 
-用法（归档内自包含，需先按 README.md 生成 data/preds/ 预测）:
-  python plot_lcfs_temporal.py --shot 29412 [--pct 5|1]
-布局：上排 = A 臂 real scratch（4 帧 R-Z），下排 = C 臂 pretrain+ft（同 4 帧），
-      第三排 = Ip(t)（共享，红虚线标记帧时刻）。
-每个 R-Z 图：pred psi 等值线 + 机械元件（PF/passive/wall/limiter）+ EFIT LCFS（蓝实线）
-vs predicted boundary（橙虚线，动态扫描 O 点连通区闭合面）。
-temporal split：训练 M5-M7（shot 11766-25017）、val M8（25605-28346）、test = M9 未来实验（28631-30451）。
-run 名 = 归档统一新名（旧名见 ../EXPERIMENTS.md 附录 A）。
-输出：out/lcfs_pred_{shot}_combined_{pct}pct.png
+Prepare predictions in data/preds/ before running:
+    python plot_lcfs_temporal.py --shot 29412 [--pct 5|1]
+The first row shows four scratch-model R-Z frames; the second shows matching
+fine-tuned frames. The third row contains a shared plasma-current trace with
+red dashed lines marking the selected frame times. Each frame includes
+predicted flux contours, machine components, the EFIT LCFS, and a predicted
+boundary estimated from closed surfaces connected to the magnetic axis.
+Training uses M5-M7 (shots 11766-25017); validation uses M8 (25605-28346);
+testing uses the later M9 campaign (28631-30451).
+Output: out/lcfs_pred_{shot}_combined_{pct}pct.png.
 """
 import argparse
 import json
@@ -23,7 +24,7 @@ from matplotlib.patches import Rectangle
 from scipy import ndimage
 from skimage import measure
 
-BASE = Path(__file__).resolve().parents[1]  # <archive>/temporal（数据与输出根）
+BASE = Path(__file__).resolve().parents[1]  # Temporal archive root for data and outputs.
 ZARR_ROOT = str(BASE / "data" / "raw" / "mast")
 PREDS_DIR = BASE / "data" / "preds"
 MANIFEST = Path(__file__).resolve().parents[2] / "test" / "split_test_real.jsonl"
