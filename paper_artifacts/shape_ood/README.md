@@ -24,15 +24,15 @@ Historical authoritative fractions are 5% (287 shots / 8,952 slices), 25% (1,436
 
 ## Current completed Test-OOD-only results
 
-Values are three-seed mean plus sample standard deviation. Gains use the paired definition `(A - C) / A × 100%` within each seed. This table is generated from `eval/shape-ood-summary-3seed.json`.
+A/C error metrics are reported as three-seed mean plus sample standard deviation (`ddof=1`). Gains use the ratio-of-means definition `100 * (mean(A) - mean(C)) / mean(A)`, calculated separately for nRMSE and mean LCFS boundary distance from the full-precision seed means, consistent with the paper's Tables 5 and 7. This is not the mean of paired per-seed gains, so the former paired-gain standard deviations are not reported. The displayed values are rounded from `eval/shape-ood-summary-3seed.json`.
 
-| Real fraction | A nRMSE (%) | C nRMSE (%) | paired nRMSE gain | A LCFS distance (m) | C LCFS distance (m) | paired LCFS gain |
+| Real fraction | A nRMSE (%) | C nRMSE (%) | nRMSE gain | A LCFS distance (m) | C LCFS distance (m) | LCFS gain |
 |---|---:|---:|---:|---:|---:|---:|
-| 1% | 5.383 ± 0.019 | 2.285 ± 0.202 | 57.57 ± 3.60% | 0.1372 ± 0.0008 | 0.0317 ± 0.0035 | 76.87 ± 2.55% |
-| 5% | 2.447 ± 0.126 | 1.706 ± 0.142 | 29.99 ± 9.09% | 0.0428 ± 0.0030 | 0.0250 ± 0.0014 | 41.31 ± 7.06% |
-| 25% | 2.071 ± 0.094 | 1.721 ± 0.107 | 16.68 ± 8.22% | 0.0359 ± 0.0010 | 0.0271 ± 0.0014 | 24.62 ± 2.02% |
-| 50% | 2.033 ± 0.098 | 1.674 ± 0.206 | 17.27 ± 13.28% | 0.0332 ± 0.0013 | 0.0273 ± 0.0018 | 17.40 ± 8.55% |
-| 100% | 2.007 ± 0.079 | 1.858 ± 0.273 | 7.66 ± 11.05% | 0.0336 ± 0.0007 | 0.0285 ± 0.0028 | 15.39 ± 8.11% |
+| 1% | 5.383 ± 0.019 | 2.285 ± 0.202 | 57.56% | 0.1372 ± 0.0008 | 0.0317 ± 0.0035 | 76.87% |
+| 5% | 2.447 ± 0.126 | 1.706 ± 0.142 | 30.30% | 0.0428 ± 0.0030 | 0.0250 ± 0.0014 | 41.64% |
+| 25% | 2.071 ± 0.094 | 1.721 ± 0.107 | 16.90% | 0.0359 ± 0.0010 | 0.0271 ± 0.0014 | 24.60% |
+| 50% | 2.033 ± 0.098 | 1.674 ± 0.206 | 17.66% | 0.0332 ± 0.0013 | 0.0273 ± 0.0018 | 17.62% |
+| 100% | 2.007 ± 0.079 | 1.858 ± 0.273 | 7.46% | 0.0336 ± 0.0007 | 0.0285 ± 0.0028 | 15.38% |
 
 The small per-run JSON files in `eval/` are the authority for the table.
 
