@@ -47,3 +47,8 @@ python scripts/evaluate_tokamind_testset.py \
 ```
 
 The output reports reconstruction errors for the poloidal flux field.
+
+## References
+
+- [TokaMind](https://github.com/UKAEA-IBM-STFC-Fusion-FMs/tokamind) — transformer model and training framework.
+- [FreeGSNKE](https://github.com/FusionComputingLab/freegsnke) — free-boundary tokamak equilibrium solver.
